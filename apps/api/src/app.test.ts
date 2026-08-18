@@ -613,6 +613,8 @@ describe("DexScreener contract lookup", () => {
     expect(res.body.token.symbol).toBe("PEPE");
     expect(res.body.community.id).toBe("demo-community");
     expect(res.body.ambiguous).toBe(false);
+    expect(res.body.trust.level).toBe("caution");
+    expect(res.body.listings[0].chainId).toBe("ethereum");
   });
 
   it("requires a wallet to bind a new contract community", async () => {

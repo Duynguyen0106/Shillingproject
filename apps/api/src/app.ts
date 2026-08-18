@@ -7,7 +7,7 @@ import { computeScore, scoreAttributedClick } from "@shillops/scoring-engine";
 import { getAddress, isAddress, verifyMessage } from "viem";
 import type { Address, Hex } from "viem";
 import { z } from "zod";
-import { lookupDexToken, normalizeContract, parseTokenQuery } from "./dexscreener";
+import { lookupDexToken, normalizeContract, parseTokenQuery, tokenTrustSignals } from "./dexscreener";
 
 const appUrl = process.env.APP_URL || "http://localhost:3000";
 const sessions = new Map<string, { wallet: string }>();
@@ -516,7 +516,8 @@ export function createApp(prisma: PrismaClient) {
     });
     const query = parsed.q || (parsed.chain && parsed.address ? `${parsed.chain}:${parsed.address}` : parsed.address);
     if (!query) return res.status(400).json({ error: "Provide q or address" });
-    const token = await lookupDexToken(query);
+    const lookup = await lookupDexToken(query);
+    const token = lookup?.token ?? null;
     const parsedQuery = parseTokenQuery(query);
     let community = null;
     if (token) {
@@ -532,6 +533,8 @@ export function createApp(prisma: PrismaClient) {
     if (!token && !community) return res.status(404).json({ error: "Token not found on DexScreener" });
     res.json({
       token,
+      listings: lookup?.listings ?? [],
+      trust: token ? tokenTrustSignals(token, parsedQuery.kind === "search") : null,
       community,
       ambiguous: parsedQuery.kind === "search",
       warning: "Communities are uniquely bound to a chain + contract. Ignore Telegram/Discord names that do not match this address."
@@ -544,7 +547,8 @@ export function createApp(prisma: PrismaClient) {
     if (!wallet) return res.status(401).json({ error: "Connect a wallet and sign in first" });
     const query = body.q || (body.chainId && body.contractAddress ? `${body.chainId}:${body.contractAddress}` : body.contractAddress);
     if (!query) return res.status(400).json({ error: "Provide q or contractAddress" });
-    const token = await lookupDexToken(query);
+    const lookup = await lookupDexToken(query);
+    const token = lookup?.token;
     const chainId = token?.chainId || body.chainId;
     const contractAddress = token?.address || (body.contractAddress ? normalizeContract(body.contractAddress) : undefined);
     if (!chainId || !contractAddress) return res.status(404).json({ error: "Token not found on DexScreener" });

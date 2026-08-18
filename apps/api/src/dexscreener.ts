@@ -3,11 +3,17 @@ export type DexPair = {
   dexId?: string;
   url?: string;
   pairAddress?: string;
+  pairCreatedAt?: number;
   baseToken?: { address?: string; name?: string; symbol?: string };
   quoteToken?: { address?: string; name?: string; symbol?: string };
   priceUsd?: string;
   liquidity?: { usd?: number };
-  info?: { imageUrl?: string };
+  volume?: { h24?: number };
+  info?: {
+    imageUrl?: string;
+    websites?: { url?: string }[];
+    socials?: { type?: string; url?: string }[];
+  };
 };
 
 export type CanonicalToken = {
@@ -17,10 +23,36 @@ export type CanonicalToken = {
   symbol: string;
   priceUsd: string | null;
   liquidityUsd: number;
+  volume24hUsd: number;
+  pairCreatedAt: number | null;
   dexUrl: string;
+  chartUrl: string | null;
   imageUrl: string | null;
   pairAddress: string | null;
+  dexId: string | null;
+  websites: string[];
+  socials: { type: string; url: string }[];
   matchedBy: "address" | "pair" | "search";
+};
+
+export type ChainListing = {
+  chainId: string;
+  address: string;
+  name: string;
+  symbol: string;
+  liquidityUsd: number;
+  dexUrl: string;
+  pairAddress: string | null;
+};
+
+export type TrustReport = {
+  level: "ok" | "caution" | "high-risk";
+  reasons: string[];
+};
+
+export type DexLookupResult = {
+  token: CanonicalToken;
+  listings: ChainListing[];
 };
 
 export type ParsedTokenQuery =
@@ -61,6 +93,40 @@ export function parseTokenQuery(input: string): ParsedTokenQuery {
   return { kind: "search", q: raw };
 }
 
+function tokenSide(pair: DexPair, preferredAddress?: string) {
+  if (preferredAddress && normalizeContract(pair.quoteToken?.address ?? "") === normalizeContract(preferredAddress)) {
+    return pair.quoteToken;
+  }
+  return pair.baseToken;
+}
+
+function toCanonical(pair: DexPair, preferredAddress?: string, matchedBy: CanonicalToken["matchedBy"] = "search"): CanonicalToken | null {
+  if (!pair.chainId || !pair.baseToken?.address) return null;
+  const token = tokenSide(pair, preferredAddress);
+  if (!token?.address) return null;
+  const pairAddress = pair.pairAddress ?? null;
+  return {
+    chainId: pair.chainId,
+    address: normalizeContract(token.address),
+    name: token.name || token.symbol || "Unknown token",
+    symbol: (token.symbol || "TOKEN").slice(0, 12),
+    priceUsd: pair.priceUsd ?? null,
+    liquidityUsd: pair.liquidity?.usd ?? 0,
+    volume24hUsd: pair.volume?.h24 ?? 0,
+    pairCreatedAt: pair.pairCreatedAt ?? null,
+    dexUrl: pair.url || `https://dexscreener.com/${pair.chainId}/${pairAddress ?? token.address}`,
+    chartUrl: pairAddress ? `https://dexscreener.com/${pair.chainId}/${pairAddress}?embed=1&theme=dark&trades=0&info=0` : null,
+    imageUrl: pair.info?.imageUrl ?? null,
+    pairAddress,
+    dexId: pair.dexId ?? null,
+    websites: (pair.info?.websites ?? []).map((site) => site.url).filter((url): url is string => Boolean(url)),
+    socials: (pair.info?.socials ?? [])
+      .filter((social) => social.url)
+      .map((social) => ({ type: social.type || "link", url: social.url as string })),
+    matchedBy
+  };
+}
+
 export function pickCanonicalPair(pairs: DexPair[], preferredAddress?: string): CanonicalToken | null {
   const ranked = [...pairs].sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0));
   const preferred = preferredAddress
@@ -74,23 +140,61 @@ export function pickCanonicalPair(pairs: DexPair[], preferredAddress?: string): 
       })
     : undefined;
   const pair = preferred ?? ranked[0];
-  if (!pair?.chainId || !pair.baseToken?.address) return null;
-  const token = preferredAddress && normalizeContract(pair.quoteToken?.address ?? "") === normalizeContract(preferredAddress)
-    ? pair.quoteToken
-    : pair.baseToken;
-  if (!token?.address) return null;
-  return {
-    chainId: pair.chainId,
-    address: normalizeContract(token.address),
-    name: token.name || token.symbol || "Unknown token",
-    symbol: (token.symbol || "TOKEN").slice(0, 12),
-    priceUsd: pair.priceUsd ?? null,
-    liquidityUsd: pair.liquidity?.usd ?? 0,
-    dexUrl: pair.url || `https://dexscreener.com/${pair.chainId}/${pair.pairAddress ?? token.address}`,
-    imageUrl: pair.info?.imageUrl ?? null,
-    pairAddress: pair.pairAddress ?? null,
-    matchedBy: preferredAddress ? (normalizeContract(pair.pairAddress ?? "") === normalizeContract(preferredAddress) ? "pair" : "address") : "search"
-  };
+  if (!pair) return null;
+  const matchedBy: CanonicalToken["matchedBy"] = preferredAddress
+    ? (normalizeContract(pair.pairAddress ?? "") === normalizeContract(preferredAddress) ? "pair" : "address")
+    : "search";
+  return toCanonical(pair, preferredAddress, matchedBy);
+}
+
+export function chainListings(pairs: DexPair[], tokenAddress: string): ChainListing[] {
+  const needle = normalizeContract(tokenAddress);
+  const byChain = new Map<string, ChainListing>();
+  for (const pair of pairs) {
+    const token = tokenSide(pair, tokenAddress);
+    if (!pair.chainId || !token?.address) continue;
+    if (normalizeContract(token.address) !== needle) continue;
+    const liquidityUsd = pair.liquidity?.usd ?? 0;
+    const current = byChain.get(pair.chainId);
+    if (current && current.liquidityUsd >= liquidityUsd) continue;
+    byChain.set(pair.chainId, {
+      chainId: pair.chainId,
+      address: normalizeContract(token.address),
+      name: token.name || token.symbol || "Unknown token",
+      symbol: (token.symbol || "TOKEN").slice(0, 12),
+      liquidityUsd,
+      dexUrl: pair.url || `https://dexscreener.com/${pair.chainId}/${pair.pairAddress ?? token.address}`,
+      pairAddress: pair.pairAddress ?? null
+    });
+  }
+  return [...byChain.values()].sort((a, b) => b.liquidityUsd - a.liquidityUsd);
+}
+
+export function tokenTrustSignals(token: CanonicalToken, ambiguous = false): TrustReport {
+  const reasons: string[] = [];
+  if (ambiguous || token.matchedBy === "search") {
+    reasons.push("Ticker search is ambiguous. Confirm this exact contract on DexScreener.");
+  }
+  if (token.liquidityUsd < 10_000) {
+    reasons.push("Liquidity is under $10k. Thin pools are a common scam/honeypot pattern.");
+  } else if (token.liquidityUsd < 50_000) {
+    reasons.push("Liquidity is under $50k. Treat this mint as high-caution.");
+  }
+  if (token.pairCreatedAt && Date.now() - token.pairCreatedAt < 24 * 60 * 60 * 1000) {
+    reasons.push("This pair is less than 24 hours old.");
+  }
+  if (token.socials.length === 0 && token.websites.length === 0) {
+    reasons.push("DexScreener lists no website or socials for this pair.");
+  }
+  const level = reasons.some((reason) => reason.includes("under $10k"))
+    ? "high-risk"
+    : reasons.length > 0
+      ? "caution"
+      : "ok";
+  if (level === "ok") {
+    reasons.push("Highest-liquidity DexScreener market for this contract. Still verify the address before joining any chat.");
+  }
+  return { level, reasons };
 }
 
 function pairsFromBody(body: unknown): DexPair[] {
@@ -101,27 +205,33 @@ function pairsFromBody(body: unknown): DexPair[] {
   return [];
 }
 
+function packResult(pairs: DexPair[], preferredAddress?: string): DexLookupResult | null {
+  const token = pickCanonicalPair(pairs, preferredAddress);
+  if (!token) return null;
+  return { token, listings: chainListings(pairs, token.address) };
+}
+
 export async function lookupDexToken(
   query: string,
   fetcher: typeof fetch = fetch
-): Promise<CanonicalToken | null> {
+): Promise<DexLookupResult | null> {
   const parsed = parseTokenQuery(query);
   const headers = { accept: "application/json" };
   if (parsed.kind === "url") {
     const pairRes = await fetcher(`https://api.dexscreener.com/latest/dex/pairs/${parsed.chainId}/${parsed.address}`, { headers });
     const pairBody = pairRes.ok ? await pairRes.json() : null;
-    const fromPair = pickCanonicalPair(pairsFromBody(pairBody), parsed.address);
+    const fromPair = packResult(pairsFromBody(pairBody), parsed.address);
     if (fromPair) return fromPair;
     const tokenRes = await fetcher(`https://api.dexscreener.com/latest/dex/tokens/${parsed.address}`, { headers });
     const tokenBody = tokenRes.ok ? await tokenRes.json() : null;
-    return pickCanonicalPair(pairsFromBody(tokenBody), parsed.address);
+    return packResult(pairsFromBody(tokenBody), parsed.address);
   }
   if (parsed.kind === "address") {
     const tokenRes = await fetcher(`https://api.dexscreener.com/latest/dex/tokens/${parsed.address}`, { headers });
     const tokenBody = tokenRes.ok ? await tokenRes.json() : null;
-    return pickCanonicalPair(pairsFromBody(tokenBody), parsed.address);
+    return packResult(pairsFromBody(tokenBody), parsed.address);
   }
   const searchRes = await fetcher(`https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(parsed.q)}`, { headers });
   const searchBody = searchRes.ok ? await searchRes.json() : null;
-  return pickCanonicalPair(pairsFromBody(searchBody));
+  return packResult(pairsFromBody(searchBody));
 }

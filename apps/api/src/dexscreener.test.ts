@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseTokenQuery, pickCanonicalPair, normalizeContract } from "./dexscreener";
+import { parseTokenQuery, pickCanonicalPair, normalizeContract, tokenTrustSignals } from "./dexscreener";
 
 describe("DexScreener query parsing", () => {
   it("parses a DexScreener pair URL", () => {
@@ -37,5 +37,19 @@ describe("DexScreener query parsing", () => {
     expect(token?.address).toBe(normalizeContract("0x6982508145454ce325ddbe47a25d4ec3d2311933"));
     expect(token?.liquidityUsd).toBe(9_000_000);
     expect(token?.matchedBy).toBe("address");
+  });
+
+  it("flags thin liquidity as high-risk", () => {
+    const token = pickCanonicalPair([
+      {
+        chainId: "ethereum",
+        pairAddress: "0xpair",
+        baseToken: { address: "0xabcabcabcabcabcabcabcabcabcabcabcabcabca", name: "Scam", symbol: "SCAM" },
+        liquidity: { usd: 800 }
+      }
+    ]);
+    const trust = tokenTrustSignals(token!, false);
+    expect(trust.level).toBe("high-risk");
+    expect(trust.reasons.some((reason) => reason.includes("$10k"))).toBe(true);
   });
 });

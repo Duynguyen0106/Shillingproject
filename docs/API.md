@@ -6,7 +6,7 @@
 - GET `/me` with `Authorization: Bearer <token>` or `?wallet=` — includes points, rank, claims, submissions, and personal tracked links for `?communityId=`
 
 ## Community
-- GET `/tokens/lookup?q=` or `?chain=&address=` — DexScreener lookup + community bound to that contract
+- GET `/tokens/lookup?q=` or `?chain=&address=` — DexScreener lookup, trust signals, other-chain listings, and the community bound to that contract
 - POST `/communities/from-token` `{ chainId, contractAddress, wallet? }` — first wallet binds the only community for that mint
 - POST `/communities`
 - GET `/communities/:id`
