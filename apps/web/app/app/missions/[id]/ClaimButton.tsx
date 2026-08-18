@@ -1,36 +1,48 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import ConnectWalletButton from "../../../ConnectWalletButton";
 import { API_BASE } from "../../../../lib/config";
-import { getStoredWallet, storeSession } from "../../../../lib/session";
+import { authHeaders } from "../../../../lib/session";
+import { useConnectedWallet } from "../../../../lib/useConnectedWallet";
 
 export default function ClaimButton({ missionId }: { missionId: string }) {
-  const [wallet, setWallet] = useState("0xdemo");
+  const { wallet, label, connected } = useConnectedWallet();
   const [status, setStatus] = useState("");
 
-  useEffect(() => {
-    setWallet(getStoredWallet("0xdemo"));
-  }, []);
-
   async function claim() {
+    if (!wallet) {
+      setStatus("Connect a wallet first.");
+      return;
+    }
     setStatus("Claiming...");
-    storeSession(wallet);
     const res = await fetch(`${API_BASE}/missions/${missionId}/claim`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: authHeaders(),
       body: JSON.stringify({ wallet })
     });
     setStatus(res.ok ? "Mission claimed." : "Claim failed.");
   }
 
+  if (!connected) {
+    return (
+      <div className="card">
+        <h3>Claim this mission</h3>
+        <p className="muted">Connect a wallet, then claim with that address.</p>
+        <ConnectWalletButton />
+        {status && <p>{status}</p>}
+      </div>
+    );
+  }
+
   return (
     <div className="card">
       <h3>Claim this mission</h3>
-      <label>
-        Wallet
-        <input value={wallet} onChange={(e) => setWallet(e.target.value)} />
-      </label>
-      <button className="btn" onClick={claim}>Claim</button>
+      <p className="muted">
+        Claiming as {label ? `${label} · ` : ""}
+        <code>{wallet}</code>
+      </p>
+      <button className="btn" onClick={() => void claim()}>Claim</button>
       <p>{status}</p>
     </div>
   );

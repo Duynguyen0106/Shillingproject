@@ -48,7 +48,7 @@ const ingestSignalSchema = z.object({
 });
 
 const submissionSchema = z.object({
-  wallet: z.string().min(3),
+  wallet: z.string().min(3).optional(),
   proofUrl: z.string().url(),
   proofText: z.string().optional(),
   engagementValue: z.number().int().min(0).default(0)
@@ -61,7 +61,7 @@ const createLinkSchema = z.object({
 });
 
 const claimSchema = z.object({
-  wallet: z.string().min(3)
+  wallet: z.string().min(3).optional()
 });
 
 export function buildSiweMessage(input: { address: string; nonce: string; uri?: string; issuedAt?: string }): string {
@@ -228,6 +228,16 @@ function asyncRoute<T extends Request>(fn: (req: T, res: Response, next: NextFun
   };
 }
 
+function walletFromAuth(req: Request): string | undefined {
+  const auth = req.get("authorization")?.replace(/^Bearer\s+/i, "").trim();
+  if (!auth) return undefined;
+  return sessions.get(auth)?.wallet;
+}
+
+function resolveActorWallet(req: Request, bodyWallet?: string): string | undefined {
+  return walletFromAuth(req) || bodyWallet;
+}
+
 export function createApp(prisma: PrismaClient) {
   const app = express();
   app.use(cors());
@@ -359,7 +369,9 @@ export function createApp(prisma: PrismaClient) {
   }));
 
   app.post("/missions/:id/claim", asyncRoute(async (req, res) => {
-    const { wallet } = claimSchema.parse(req.body);
+    const { wallet: bodyWallet } = claimSchema.parse(req.body ?? {});
+    const wallet = resolveActorWallet(req, bodyWallet);
+    if (!wallet) return res.status(401).json({ error: "Connect a wallet and sign in first" });
     let user = await prisma.user.findUnique({ where: { wallet } });
     if (!user) user = await prisma.user.create({ data: { wallet } });
     const mission = await prisma.mission.findUnique({ where: { id: req.params.id } });
@@ -378,7 +390,9 @@ export function createApp(prisma: PrismaClient) {
   }));
 
   app.post("/tasks/:id/submissions", asyncRoute(async (req, res) => {
-    const { wallet, proofUrl, proofText, engagementValue } = submissionSchema.parse(req.body);
+    const { wallet: bodyWallet, proofUrl, proofText, engagementValue } = submissionSchema.parse(req.body);
+    const wallet = resolveActorWallet(req, bodyWallet);
+    if (!wallet) return res.status(401).json({ error: "Connect a wallet and sign in first" });
     let user = await prisma.user.findUnique({ where: { wallet } });
     if (!user) user = await prisma.user.create({ data: { wallet } });
     const task = await prisma.missionTask.findUnique({ where: { id: req.params.id }, include: { mission: true } });

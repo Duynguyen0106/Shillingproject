@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import ConnectWalletButton from "./ConnectWalletButton";
 import { API_BASE, COMMUNITY_ID } from "../lib/config";
-import { getStoredDisplayName, getStoredWallet, storeSession } from "../lib/session";
+import { authHeaders, getStoredDisplayName, getStoredWallet, storeSession } from "../lib/session";
 
 export default function JoinCta() {
   const [wallet, setWallet] = useState("");
@@ -28,7 +28,7 @@ export default function JoinCta() {
     setStatus("Joining...");
     const res = await fetch(`${API_BASE}/communities/${COMMUNITY_ID}/join`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: authHeaders(),
       body: JSON.stringify({ wallet, displayName })
     });
     if (res.ok) {

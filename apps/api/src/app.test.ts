@@ -247,6 +247,42 @@ describe("mission claims", () => {
     expect(res.body.claimed).toBe(true);
     expect(upsertClaim).toHaveBeenCalledTimes(1);
   });
+
+  it("rejects claim without wallet or session", async () => {
+    const res = await request(createApp({} as never)).post("/missions/mission-1/claim").send({});
+    expect(res.status).toBe(401);
+  });
+
+  it("uses SIWE session wallet instead of a spoofed body wallet", async () => {
+    const { generatePrivateKey, privateKeyToAccount } = await import("viem/accounts");
+    const account = privateKeyToAccount(generatePrivateKey());
+    const findUser = vi.fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({ id: "u1", wallet: account.address });
+    const createUser = vi.fn().mockResolvedValue({ id: "u1", wallet: account.address });
+    const findMission = vi.fn().mockResolvedValue({ id: "mission-1" });
+    const upsertClaim = vi.fn().mockResolvedValue({ id: "claim-1", missionId: "mission-1", userId: "u1" });
+    const app = createApp({
+      user: { findUnique: findUser, create: createUser },
+      mission: { findUnique: findMission },
+      missionClaim: { upsert: upsertClaim }
+    } as never);
+
+    const start = await request(app).post("/auth/siwe/start").send({ wallet: account.address });
+    const signature = await account.signMessage({ message: start.body.message });
+    const verify = await request(app).post("/auth/siwe/verify").send({
+      message: start.body.message,
+      signature
+    });
+    expect(verify.status).toBe(200);
+
+    const res = await request(app)
+      .post("/missions/mission-1/claim")
+      .set("Authorization", `Bearer ${verify.body.token}`)
+      .send({ wallet: "0xattacker" });
+    expect(res.status).toBe(200);
+    expect(findUser).toHaveBeenLastCalledWith({ where: { wallet: account.address } });
+  });
 });
 
 describe("notification log", () => {

@@ -143,3 +143,11 @@ label {
   color: #a1a1aa;
   margin-left: auto;
 }
+.wallet-option .wallet-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.wallet-option .wallet-meta small {
+  margin-left: 0;
+}

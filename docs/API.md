@@ -16,11 +16,11 @@
 - POST `/signals/:id/create-mission`
 - GET `/communities/:id/missions?status=active`
 - GET `/missions/:id`
-- POST `/missions/:id/claim`
+- POST `/missions/:id/claim` `{ wallet? }` — SIWE Bearer token overrides body wallet
 - POST `/missions/:id/complete`
 
 ## Submissions / Scoring
-- POST `/tasks/:id/submissions`
+- POST `/tasks/:id/submissions` `{ wallet?, proofUrl, proofText?, engagementValue? }` — Bearer token wallet wins over body
 - POST `/submissions/:id/verify`
 - GET `/communities/:id/leaderboard`
 

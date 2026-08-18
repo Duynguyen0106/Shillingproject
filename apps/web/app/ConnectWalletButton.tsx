@@ -2,10 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { API_BASE, COMMUNITY_ID } from "../lib/config";
-import { clearSession, getStoredWallet, shortAddress, storeSession } from "../lib/session";
+import { clearSession, getStoredWallet, getStoredWalletLabel, shortAddress, storeSession } from "../lib/session";
+import { FEATURED_WALLETS, matchFeatured } from "../lib/wallets";
 
 type WalletProvider = {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+  disconnect?: () => Promise<void>;
+  accounts?: string[];
+  session?: { peer?: { metadata?: { name?: string } } };
 };
 
 type DiscoveredWallet = {
@@ -17,6 +21,8 @@ type DiscoveredWallet = {
 };
 
 const PROJECT_ID = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "";
+
+let walletConnectProvider: WalletProvider | null = null;
 
 function utf8ToHex(value: string): string {
   return `0x${Array.from(new TextEncoder().encode(value)).map((b) => b.toString(16).padStart(2, "0")).join("")}`;
@@ -42,7 +48,7 @@ function discoverInjectedWallets(): Promise<DiscoveredWallet[]> {
   });
 }
 
-async function siweLogin(address: string, provider: WalletProvider) {
+async function siweLogin(address: string, provider: WalletProvider, walletLabel?: string) {
   const start = await fetch(`${API_BASE}/auth/siwe/start`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -74,20 +80,24 @@ async function siweLogin(address: string, provider: WalletProvider) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ wallet: user.wallet, displayName: user.displayName })
   });
-  storeSession(user.wallet, user.displayName || "Raider", token);
+  storeSession(user.wallet, user.displayName || "Raider", token, walletLabel);
   return user.wallet as string;
 }
 
 export default function ConnectWalletButton() {
   const [wallet, setWallet] = useState("");
+  const [label, setLabel] = useState("");
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
   const [injected, setInjected] = useState<DiscoveredWallet[]>([]);
 
   useEffect(() => {
-    setWallet(getStoredWallet());
-    const sync = () => setWallet(getStoredWallet());
+    const sync = () => {
+      setWallet(getStoredWallet());
+      setLabel(getStoredWalletLabel());
+    };
+    sync();
     window.addEventListener("shillops-session", sync);
     return () => window.removeEventListener("shillops-session", sync);
   }, []);
@@ -104,8 +114,9 @@ export default function ConnectWalletButton() {
       const accounts = (await item.provider.request({ method: "eth_requestAccounts" })) as string[];
       const address = accounts[0];
       if (!address) throw new Error("No account selected");
-      const connected = await siweLogin(address, item.provider);
+      const connected = await siweLogin(address, item.provider, item.name);
       setWallet(connected);
+      setLabel(item.name);
       setOpen(false);
       setStatus("Wallet connected.");
     } catch (err) {
@@ -115,15 +126,22 @@ export default function ConnectWalletButton() {
     }
   }
 
-  async function connectWalletConnect() {
+  async function connectWalletConnect(preferredName?: string) {
     if (!PROJECT_ID || PROJECT_ID.startsWith("placeholder")) {
       setStatus("Set NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID to enable Trust/Phantom mobile QR.");
       return;
     }
     setBusy(true);
-    setStatus("Opening WalletConnect...");
+    setStatus(preferredName ? `Opening ${preferredName} via WalletConnect...` : "Opening WalletConnect...");
     try {
       const { EthereumProvider } = await import("@walletconnect/ethereum-provider");
+      if (walletConnectProvider?.disconnect) {
+        try {
+          await walletConnectProvider.disconnect();
+        } catch {
+          /* already disconnected */
+        }
+      }
       const provider = await EthereumProvider.init({
         projectId: PROJECT_ID,
         chains: [1],
@@ -136,11 +154,14 @@ export default function ConnectWalletButton() {
           icons: ["https://avatars.githubusercontent.com/u/37784886"]
         }
       });
+      walletConnectProvider = provider;
       await provider.connect();
       const address = provider.accounts[0];
       if (!address) throw new Error("No WalletConnect account");
-      const connected = await siweLogin(address, provider);
+      const peerName = provider.session?.peer?.metadata?.name || preferredName || "WalletConnect";
+      const connected = await siweLogin(address, provider, peerName);
       setWallet(connected);
+      setLabel(peerName);
       setOpen(false);
       setStatus("Wallet connected.");
     } catch (err) {
@@ -150,17 +171,42 @@ export default function ConnectWalletButton() {
     }
   }
 
-  function disconnect() {
+  async function connectFeatured(walletId: string) {
+    const featured = FEATURED_WALLETS.find((item) => item.id === walletId);
+    if (!featured) return;
+    const detected = injected.find((item) => matchFeatured(item.rdns, item.name)?.id === featured.id);
+    if (detected) {
+      await connectInjected(detected);
+      return;
+    }
+    if (PROJECT_ID && !PROJECT_ID.startsWith("placeholder")) {
+      await connectWalletConnect(featured.name);
+      return;
+    }
+    window.open(featured.installUrl, "_blank", "noopener,noreferrer");
+    setStatus(`Install ${featured.name}, then return and connect. WalletConnect QR needs NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID.`);
+  }
+
+  async function disconnect() {
+    if (walletConnectProvider?.disconnect) {
+      try {
+        await walletConnectProvider.disconnect();
+      } catch {
+        /* ignore */
+      }
+    }
+    walletConnectProvider = null;
     clearSession();
     setWallet("");
+    setLabel("");
     setStatus("Disconnected.");
   }
 
   if (wallet) {
     return (
       <span className="row" style={{ marginLeft: "auto" }}>
-        <span className="badge">{shortAddress(wallet)}</span>
-        <button className="btn secondary" onClick={disconnect}>Disconnect</button>
+        <span className="badge">{label ? `${label} · ${shortAddress(wallet)}` : shortAddress(wallet)}</span>
+        <button className="btn secondary" onClick={() => void disconnect()}>Disconnect</button>
       </span>
     );
   }
@@ -168,26 +214,50 @@ export default function ConnectWalletButton() {
   return (
     <span className="row" style={{ marginLeft: "auto" }}>
       <button className="btn" disabled={busy} onClick={() => setOpen(true)}>Connect wallet</button>
-      {status && <span className="muted">{status}</span>}
+      {status && !open && <span className="muted">{status}</span>}
       {open && (
         <div className="modal-backdrop" onClick={() => !busy && setOpen(false)}>
           <div className="card modal" onClick={(e) => e.stopPropagation()}>
             <h3>Connect a wallet</h3>
-            <p className="muted">Installed wallets appear first. WalletConnect covers Trust, Phantom, and 300+ mobile wallets.</p>
+            <p className="muted">Installed extensions connect directly. WalletConnect QR covers 300+ mobile wallets including Trust and Phantom.</p>
+            {injected.length > 0 && (
+              <>
+                <h4>Detected in this browser</h4>
+                <div className="wallet-grid">
+                  {injected.map((item) => (
+                    <button key={item.uuid} className="wallet-option" disabled={busy} onClick={() => void connectInjected(item)}>
+                      <img src={item.icon} alt="" width={28} height={28} />
+                      <span>{item.name}</span>
+                      <small>Installed</small>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+            <h4>Popular wallets</h4>
             <div className="wallet-grid">
-              {injected.map((item) => (
-                <button key={item.uuid} className="wallet-option" disabled={busy} onClick={() => void connectInjected(item)}>
-                  <img src={item.icon} alt="" width={28} height={28} />
-                  <span>{item.name}</span>
-                </button>
-              ))}
+              {FEATURED_WALLETS.map((item) => {
+                const detected = injected.some((inj) => matchFeatured(inj.rdns, inj.name)?.id === item.id);
+                return (
+                  <button key={item.id} className="wallet-option" disabled={busy} onClick={() => void connectFeatured(item.id)}>
+                    <span className="wallet-meta">
+                      <span>{item.name}</span>
+                      <small>{detected ? "Detected" : item.hint}</small>
+                    </span>
+                    <small>{detected ? "Connect" : "WalletConnect / Install"}</small>
+                  </button>
+                );
+              })}
               <button className="wallet-option" disabled={busy} onClick={() => void connectWalletConnect()}>
-                <span>WalletConnect</span>
-                <small>Trust, Phantom, Rainbow, OKX, Ledger…</small>
+                <span className="wallet-meta">
+                  <span>WalletConnect</span>
+                  <small>QR for any mobile wallet</small>
+                </span>
+                <small>300+ wallets</small>
               </button>
             </div>
             {injected.length === 0 && (
-              <p className="muted">No browser wallets detected. Use WalletConnect QR or install Phantom, Trust, or MetaMask.</p>
+              <p className="muted">No browser wallets detected. Pick a popular wallet or scan a WalletConnect QR.</p>
             )}
             <button className="btn secondary" onClick={() => setOpen(false)}>Close</button>
             <p>{status}</p>
