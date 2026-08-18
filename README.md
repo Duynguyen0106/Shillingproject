@@ -38,12 +38,21 @@
 
 ## Demo Flow
 
-1. Post mock signal to `POST /signals/ingest`.
+From the UI:
+
+1. Join the demo community on `/`.
+2. Ingest a mock signal at `/app/admin/signals` (mission auto-creates).
+3. Open the mission from `/app` and submit proof.
+4. Confirm points on `/app/leaderboard`.
+5. Create a tracked CTA at `/app/admin/attribution` and click `/r/:code`.
+
+From the API:
+
+1. `POST /signals/ingest`
 2. Mission is auto-created with idempotency on signal dedupe key.
-3. Mission appears in web board at `/app`.
-4. Submit proof on mission details page.
-5. Points update leaderboard.
-6. Create short link via `POST /links` and track clicks with `GET /r/:code`.
+3. `POST /tasks/:id/submissions`
+4. `GET /communities/:id/leaderboard`
+5. `POST /links` then `GET /r/:code`
 
 ## Notification templates
 

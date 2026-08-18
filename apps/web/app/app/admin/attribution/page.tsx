@@ -1,4 +1,6 @@
-import { apiGet } from "../../../../lib/api";
+import CreateLinkForm from "./CreateLinkForm";
+import { apiGetSafe } from "../../../../lib/api";
+import { COMMUNITY_ID } from "../../../../lib/config";
 
 type LinkStats = {
   code: string;
@@ -6,16 +8,22 @@ type LinkStats = {
   clicks: number;
 };
 
-const COMMUNITY_ID = process.env.NEXT_PUBLIC_DEMO_COMMUNITY_ID || "demo-community";
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:4000";
 
 export default async function AdminAttributionPage() {
-  const rows = await apiGet<LinkStats[]>(`/communities/${COMMUNITY_ID}/attribution`);
+  const rows = await apiGetSafe<LinkStats[]>(`/communities/${COMMUNITY_ID}/attribution`, []);
   return (
     <main className="container">
       <h1>Admin: Attribution</h1>
+      <p>Create tracked short links and review click counts.</p>
+      <CreateLinkForm />
+      {rows.length === 0 && <p>No tracked links yet.</p>}
       {rows.map((row) => (
         <div key={row.code} className="card">
           <strong>{row.code}</strong> → {row.targetUrl} ({row.clicks} clicks)
+          <div>
+            <a href={`${API_BASE}/r/${row.code}`} target="_blank" rel="noreferrer">Open tracked link</a>
+          </div>
         </div>
       ))}
     </main>

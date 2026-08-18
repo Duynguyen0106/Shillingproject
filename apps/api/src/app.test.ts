@@ -1,7 +1,7 @@
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
-import { Priority, SignalType } from "@prisma/client";
-import { createApp } from "./app";
+import { ActionType, Priority, SignalType } from "@prisma/client";
+import { createApp, scoreSubmission, buildMissionAlertMessage } from "./app";
 
 describe("API validation and health", () => {
   const app = createApp({} as never);
@@ -115,5 +115,107 @@ describe("leaderboard aggregation response", () => {
     expect(res.status).toBe(200);
     expect(res.body[0]).toMatchObject({ rank: 1, userId: "u1", points: 42, displayName: "Alpha" });
     expect(res.body[1]).toMatchObject({ rank: 2, userId: "u2", points: 17, displayName: "Beta" });
+  });
+});
+
+describe("scoring and alerts", () => {
+  it("applies early bonus, high priority multiplier, and duplicate penalty", () => {
+    const points = scoreSubmission({
+      actionType: ActionType.REPLY,
+      priority: Priority.HIGH,
+      isEarly: true,
+      duplicatePenalty: true,
+      engagementValue: 25
+    });
+    expect(points).toBe(18);
+  });
+
+  it("builds whale and mention templates", () => {
+    const whale = buildMissionAlertMessage({
+      missionId: "m1",
+      title: "Whale response",
+      signalType: SignalType.WHALE_BUY,
+      priority: Priority.HIGH,
+      metadata: { token: "PEPE" }
+    });
+    expect(whale).toContain("Whale buy detected for PEPE");
+    expect(whale).toContain("/app/missions/m1");
+
+    const spike = buildMissionAlertMessage({
+      missionId: "m2",
+      title: "Spike response",
+      signalType: SignalType.MENTION_SPIKE,
+      priority: Priority.MEDIUM,
+      metadata: { ticker: "PEPE", spikePct: 42 }
+    });
+    expect(spike).toContain("Mention spike: PEPE up 42%");
+  });
+});
+
+describe("attribution tracking", () => {
+  it("logs a click and redirects", async () => {
+    const findUnique = vi.fn().mockResolvedValue({
+      id: "link-1",
+      code: "abc12345",
+      targetUrl: "https://example.com/mission"
+    });
+    const createClick = vi.fn().mockResolvedValue({});
+    const app = createApp({
+      shortLink: { findUnique },
+      shortLinkClick: { create: createClick }
+    } as never);
+
+    const res = await request(app).get("/r/abc12345");
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe("https://example.com/mission");
+    expect(createClick).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns attribution click counts", async () => {
+    const findMany = vi.fn().mockResolvedValue([
+      { code: "abc12345", targetUrl: "https://example.com", _count: { clicks: 3 } }
+    ]);
+    const app = createApp({
+      shortLink: { findMany }
+    } as never);
+
+    const res = await request(app).get("/communities/demo-community/attribution");
+    expect(res.status).toBe(200);
+    expect(res.body[0]).toEqual({ code: "abc12345", targetUrl: "https://example.com", clicks: 3 });
+  });
+});
+
+describe("submissions", () => {
+  it("awards points and writes a score row", async () => {
+    const findUser = vi.fn().mockResolvedValue(null);
+    const createUser = vi.fn().mockResolvedValue({ id: "user-1", wallet: "0xdemo" });
+    const findTask = vi.fn().mockResolvedValue({
+      id: "task-1",
+      title: "Reply with narrative",
+      actionType: ActionType.REPLY,
+      createdAt: new Date(),
+      mission: { communityId: "demo-community", priority: Priority.HIGH }
+    });
+    const createSubmission = vi.fn().mockResolvedValue({ id: "sub-1", pointsAwarded: 18 });
+    const createScore = vi.fn().mockResolvedValue({});
+
+    const app = createApp({
+      user: { findUnique: findUser, create: createUser },
+      missionTask: { findUnique: findTask },
+      submission: { create: createSubmission },
+      score: { create: createScore }
+    } as never);
+
+    const res = await request(app).post("/tasks/task-1/submissions").send({
+      wallet: "0xdemo",
+      proofUrl: "https://x.com/example/status/1",
+      proofText: "copy pasta",
+      engagementValue: 25
+    });
+
+    expect(res.status).toBe(200);
+    expect(createSubmission).toHaveBeenCalledTimes(1);
+    expect(createScore).toHaveBeenCalledTimes(1);
+    expect(createScore.mock.calls[0][0].data.communityId).toBe("demo-community");
   });
 });

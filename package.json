@@ -13,6 +13,7 @@
     "prisma:generate": "npm run prisma:generate -w @shillops/api",
     "prisma:migrate": "npm run prisma:migrate -w @shillops/api",
     "prisma:seed": "npm run prisma:seed -w @shillops/api",
-    "smoke:phase1": "node scripts/phase1-smoke.mjs"
+    "smoke:phase1": "node scripts/phase1-smoke.mjs",
+    "test": "npm run test -w @shillops/api && npm run test -w @shillops/scoring-engine"
   }
 }

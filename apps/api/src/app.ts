@@ -50,7 +50,7 @@ const createLinkSchema = z.object({
   targetUrl: z.string().url()
 });
 
-function scoreSubmission(input: { actionType: ActionType; priority: Priority; isEarly: boolean; duplicatePenalty: boolean; engagementValue: number }): number {
+export function scoreSubmission(input: { actionType: ActionType; priority: Priority; isEarly: boolean; duplicatePenalty: boolean; engagementValue: number }): number {
   const base = actionBasePoints[input.actionType] ?? 5;
   const earlyBonus = input.isEarly ? base * 0.3 : 0;
   const engagementBonus = Math.min(20, Math.floor(input.engagementValue / 10));
@@ -72,7 +72,7 @@ async function sendWebhookMessage(url: string | undefined, message: string) {
   }
 }
 
-function buildMissionAlertMessage(input: {
+export function buildMissionAlertMessage(input: {
   missionId: string;
   title: string;
   signalType: SignalType;
@@ -94,7 +94,6 @@ function buildMissionAlertMessage(input: {
 }
 
 async function notifyMissionCreated(
-  prisma: PrismaClient,
   missionId: string,
   title: string,
   signalType: SignalType,
@@ -192,7 +191,7 @@ export function createApp(prisma: PrismaClient) {
         },
         include: { tasks: true }
       });
-      await notifyMissionCreated(prisma, mission.id, mission.title, signal.type, mission.priority, signal.metadata as Prisma.JsonValue | undefined);
+      await notifyMissionCreated(mission.id, mission.title, signal.type, mission.priority, signal.metadata as Prisma.JsonValue | undefined);
     }
     res.json({ signal, mission });
   }));

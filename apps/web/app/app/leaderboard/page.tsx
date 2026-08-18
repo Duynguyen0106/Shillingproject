@@ -1,4 +1,6 @@
-import { apiGet } from "../../../lib/api";
+import Link from "next/link";
+import { apiGetSafe } from "../../../lib/api";
+import { COMMUNITY_ID } from "../../../lib/config";
 
 type Row = {
   rank: number;
@@ -7,13 +9,17 @@ type Row = {
   points: number;
 };
 
-const COMMUNITY_ID = process.env.NEXT_PUBLIC_DEMO_COMMUNITY_ID || "demo-community";
-
 export default async function LeaderboardPage() {
-  const rows = await apiGet<Row[]>(`/communities/${COMMUNITY_ID}/leaderboard`);
+  const rows = await apiGetSafe<Row[]>(`/communities/${COMMUNITY_ID}/leaderboard`, []);
   return (
     <main className="container">
       <h1>Leaderboard</h1>
+      {rows.length === 0 && (
+        <div className="card">
+          <p>No scores yet. Submit proof on a mission to earn points.</p>
+          <Link href="/app">Back to missions</Link>
+        </div>
+      )}
       {rows.map((row) => (
         <div key={row.rank} className="card">
           #{row.rank} {row.displayName || row.wallet} — {row.points} pts
