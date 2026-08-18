@@ -7,3 +7,5 @@ Communities are uniquely bound to a DexScreener chain + contract so users can se
 CTO lead is a seat inside that community, not a second community. The first binder is lead. They can resign, or the seat opens after 48 hours of inactivity, and another joined wallet can claim it on the same mint.
 
 Each mission has a short war room: the lead pins one narrative line, joined wallets tap I'm in, and the room locks when the mission expires. There is no standing chat. Hype is meant to happen on X/Telegram using the pinned talk track and tracked CTAs.
+
+The CTO lead can bind one X Community URL to the mint. It shows on the token hub. New missions then include a bonus “post in that Community” task. Main raid proofs stay any X status URL so reply-guying is not blocked.

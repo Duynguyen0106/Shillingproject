@@ -6,9 +6,20 @@ import { API_BASE } from "../../../../lib/config";
 import { authHeaders, notifyOps } from "../../../../lib/session";
 import { useContributorProfile } from "../../../../lib/useContributorProfile";
 
-export default function SubmissionForm({ taskId, missionId }: { taskId: string; missionId: string }) {
+export default function SubmissionForm({
+  taskId,
+  missionId,
+  taskDetails
+}: {
+  taskId: string;
+  missionId: string;
+  taskDetails?: string | null;
+}) {
   const { wallet, label, connected, profile } = useContributorProfile();
-  const [proofUrl, setProofUrl] = useState("https://x.com/example/post");
+  const xCommunityId = taskDetails?.startsWith("x-community:") ? taskDetails.slice("x-community:".length) : null;
+  const [proofUrl, setProofUrl] = useState(
+    xCommunityId ? `https://x.com/i/communities/${xCommunityId}` : "https://x.com/example/status/1"
+  );
   const [proofText, setProofText] = useState("");
   const [status, setStatus] = useState("");
   const [points, setPoints] = useState<number | null>(null);
@@ -66,6 +77,13 @@ export default function SubmissionForm({ taskId, missionId }: { taskId: string; 
         Proof URL
         <input value={proofUrl} onChange={(e) => setProofUrl(e.target.value)} />
       </label>
+      {xCommunityId && (
+        <p className="muted">
+          Bonus task: paste a post from{" "}
+          <a href={`https://x.com/i/communities/${xCommunityId}`} target="_blank" rel="noreferrer">the linked X Community</a>.
+          Reply/KOL tasks on this mission still accept any x.com status URL.
+        </p>
+      )}
       <label>
         Proof text
         <textarea value={proofText} onChange={(e) => setProofText(e.target.value)} />

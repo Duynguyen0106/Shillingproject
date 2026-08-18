@@ -6,7 +6,7 @@ import { Prisma, PrismaClient, ActionType, MissionStatus, Platform, Priority, Si
 import { computeScore, scoreAttributedClick } from "@shillops/scoring-engine";
 import { getAddress, isAddress, verifyMessage } from "viem";
 import type { Address, Hex } from "viem";
-import { evaluateLeadSeat, sameWallet, type LeadMember, type LeadSeat } from "./lead";
+import { parseXCommunityUrl, proofMatchesXCommunity, xCommunityIdFromTask, xCommunityTaskDetails, X_COMMUNITY_TASK_TITLE } from "./xcommunity";
 import { z } from "zod";
 import {
   fetchDexOrders,
@@ -89,6 +89,11 @@ const claimSchema = z.object({
 const pinSchema = z.object({
   wallet: z.string().min(3).optional(),
   body: z.string().trim().min(1).max(280)
+});
+
+const xCommunitySchema = z.object({
+  wallet: z.string().min(3).optional(),
+  url: z.string().min(8)
 });
 
 const tokenLookupSchema = z.object({
@@ -418,6 +423,26 @@ async function createMissionFromSignal(
   const description = contractAddress
     ? `Auto-created from ${signal.type} on ${chainId ?? "chain"} ${contractAddress}. Join only this mint.`
     : `Auto-created mission from ${signal.type} signal`;
+  const community = await prisma.community?.findUnique?.({ where: { id: signal.communityId } });
+  const tasks: {
+    title: string;
+    details?: string;
+    actionType: ActionType;
+    platform: Platform;
+    basePoints: number;
+  }[] = [
+    { title: "Reply with narrative", actionType: ActionType.REPLY, platform: Platform.X, basePoints: 10 },
+    { title: "Share in Telegram", actionType: ActionType.SHARE, platform: Platform.TELEGRAM, basePoints: 6 }
+  ];
+  if (community?.xCommunityId) {
+    tasks.push({
+      title: X_COMMUNITY_TASK_TITLE,
+      details: xCommunityTaskDetails(community.xCommunityId),
+      actionType: ActionType.SHARE,
+      platform: Platform.X,
+      basePoints: 8
+    });
+  }
   const mission = await prisma.mission.create({
     data: {
       communityId: signal.communityId,
@@ -426,12 +451,7 @@ async function createMissionFromSignal(
       description,
       priority: priorityFromSeverity(signal.severity),
       urgency: signal.severity,
-      tasks: {
-        create: [
-          { title: "Reply with narrative", actionType: ActionType.REPLY, platform: Platform.X, basePoints: 10 },
-          { title: "Share in Telegram", actionType: ActionType.SHARE, platform: Platform.TELEGRAM, basePoints: 6 }
-        ]
-      }
+      tasks: { create: tasks }
     },
     include: { tasks: true, shortLinks: true }
   });
@@ -828,6 +848,35 @@ export function createApp(prisma: PrismaClient) {
     res.json({ claimed: true, lead, you: { role: "lead", isLead: true } });
   }));
 
+  app.post("/communities/:id/x-community", asyncRoute(async (req, res) => {
+    const { wallet: bodyWallet, url } = xCommunitySchema.parse(req.body ?? {});
+    const wallet = resolveActorWallet(req, bodyWallet);
+    if (!wallet) return res.status(401).json({ error: "Connect a wallet and sign in first" });
+    const community = await prisma.community.findUnique({ where: { id: req.params.id } });
+    if (!community) return res.status(404).json({ error: "Community not found" });
+    const seat = await loadLeadSeat(prisma, community.id);
+    if (seat.vacant || !sameWallet(seat.wallet, wallet)) {
+      return res.status(403).json({ error: "Only the active CTO lead can bind the X Community for this mint" });
+    }
+    const parsed = parseXCommunityUrl(url);
+    if (!parsed) {
+      return res.status(400).json({ error: "Use an X Community URL like https://x.com/i/communities/123456789" });
+    }
+    const taken = await prisma.community.findFirst({
+      where: { xCommunityId: parsed.id, NOT: { id: community.id } }
+    });
+    if (taken) {
+      return res.status(409).json({ error: "That X Community is already bound to another mint" });
+    }
+    const updated = await prisma.community.update({
+      where: { id: community.id },
+      data: { xCommunityId: parsed.id, xCommunityUrl: parsed.url }
+    });
+    const user = await prisma.user.findUnique({ where: { wallet } });
+    if (user) await touchMemberActivity(prisma, user.id, community.id);
+    res.json({ community: updated, xCommunity: parsed });
+  }));
+
   app.post("/signals/ingest", asyncRoute(async (req, res) => {
     const body = ingestSignalSchema.parse(req.body);
     const { type, severity, sourceRef, metadata } = body;
@@ -1140,6 +1189,12 @@ export function createApp(prisma: PrismaClient) {
     }
     const closed = missionClosedReason(task.mission);
     if (closed) return res.status(409).json({ error: closed });
+    const requiredCommunityId = xCommunityIdFromTask(task.details);
+    if (requiredCommunityId && !proofMatchesXCommunity(proofUrl, requiredCommunityId)) {
+      return res.status(400).json({
+        error: `This bonus task needs a post from the linked X Community (https://x.com/i/communities/${requiredCommunityId}). Reply/KOL proofs on this mission can still be any x.com status URL.`
+      });
+    }
     const isEarly = Date.now() - task.createdAt.getTime() < 10 * 60 * 1000;
     const duplicatePenalty = Boolean(proofText && proofText.length > 0 && proofText.toLowerCase().includes("copy"));
     const points = scoreSubmission({ actionType: task.actionType, priority: task.mission.priority, isEarly, duplicatePenalty, engagementValue });

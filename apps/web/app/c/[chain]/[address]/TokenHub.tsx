@@ -79,6 +79,8 @@ type LookupResponse = {
     contractAddress?: string | null;
     dexUrl?: string | null;
     description?: string | null;
+    xCommunityUrl?: string | null;
+    xCommunityId?: string | null;
   } | null;
   lead?: LeadSeat | null;
   you?: Membership | null;
@@ -100,6 +102,7 @@ export default function TokenHub({ chain, address }: { chain: string; address: s
   const [missions, setMissions] = useState<Mission[]>([]);
   const [status, setStatus] = useState("Loading DexScreener…");
   const [busy, setBusy] = useState(false);
+  const [xUrl, setXUrl] = useState("");
 
   useEffect(() => {
     const load = async () => {
@@ -111,6 +114,7 @@ export default function TokenHub({ chain, address }: { chain: string; address: s
       }
       const body = (await res.json()) as LookupResponse;
       setData(body);
+      if (body.community?.xCommunityUrl) setXUrl(body.community.xCommunityUrl);
       if (body.community) {
         storeCommunity({
           id: body.community.id,
@@ -236,6 +240,34 @@ export default function TokenHub({ chain, address }: { chain: string; address: s
     setBusy(false);
   }
 
+  async function bindXCommunity() {
+    const communityId = data?.community?.id;
+    if (!wallet || !communityId) {
+      setStatus("Connect as CTO lead first.");
+      return;
+    }
+    setBusy(true);
+    setStatus("Binding X Community to this mint...");
+    const res = await fetch(`${API_BASE}/communities/${communityId}/x-community`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ url: xUrl, wallet: getStoredWallet() })
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setStatus(body.error || "Could not bind that X Community.");
+      setBusy(false);
+      return;
+    }
+    setData((current) => current ? {
+      ...current,
+      community: { ...current.community!, xCommunityUrl: body.xCommunity?.url, xCommunityId: body.xCommunity?.id }
+    } : current);
+    setXUrl(body.xCommunity?.url || xUrl);
+    setStatus("X Community linked to this mint. New missions get a bonus post-in-community task.");
+    setBusy(false);
+  }
+
   const token = data?.token;
   const community = data?.community;
   const trust = data?.trust;
@@ -326,6 +358,34 @@ export default function TokenHub({ chain, address }: { chain: string; address: s
             <strong>{community.name}</strong> · {community.ticker}
           </p>
           <p className="muted">{community.description}</p>
+          <div className="card">
+            <h3>X Community</h3>
+            {community.xCommunityUrl ? (
+              <p>
+                <a href={community.xCommunityUrl} target="_blank" rel="noreferrer">Open the linked X Community</a>
+              </p>
+            ) : (
+              <p className="muted">
+                Talk happens on X. The CTO lead can bind the official X Community URL for this mint.
+                Raid proofs are still any X post; posting in that Community is a bonus task.
+              </p>
+            )}
+            {connected && isYouLead && !lead?.vacant && (
+              <label>
+                X Community URL
+                <input
+                  value={xUrl}
+                  onChange={(e) => setXUrl(e.target.value)}
+                  placeholder="https://x.com/i/communities/…"
+                />
+              </label>
+            )}
+            {connected && isYouLead && !lead?.vacant && (
+              <button className="btn secondary" disabled={busy} onClick={() => void bindXCommunity()}>
+                {community.xCommunityUrl ? "Update X Community" : "Bind X Community"}
+              </button>
+            )}
+          </div>
           {lead && (
             <div className="card">
               <h3>CTO lead</h3>

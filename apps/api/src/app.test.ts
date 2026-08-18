@@ -940,3 +940,107 @@ describe("mission war room", () => {
     expect(res.status).toBe(403);
   });
 });
+
+describe("X Community bind and bonus proof", () => {
+  it("lets the active lead bind an X Community URL to the mint", async () => {
+    const update = vi.fn().mockResolvedValue({
+      id: "demo-community",
+      xCommunityId: "123456789",
+      xCommunityUrl: "https://x.com/i/communities/123456789"
+    });
+    const app = createApp({
+      community: {
+        findUnique: vi.fn().mockResolvedValue({ id: "demo-community" }),
+        findFirst: vi.fn().mockResolvedValue(null),
+        update
+      },
+      communityMember: {
+        findFirst: vi.fn().mockResolvedValue({
+          role: "lead",
+          lastActiveAt: new Date(),
+          user: { wallet: "0xlead", displayName: "Lead" }
+        }),
+        updateMany: vi.fn()
+      },
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "user-1", wallet: "0xlead" }) }
+    } as never);
+
+    const denied = await request(app).post("/communities/demo-community/x-community").send({
+      wallet: "0xmember",
+      url: "https://x.com/i/communities/123456789"
+    });
+    expect(denied.status).toBe(403);
+
+    const bad = await request(app).post("/communities/demo-community/x-community").send({
+      wallet: "0xlead",
+      url: "https://x.com/pepecoin"
+    });
+    expect(bad.status).toBe(400);
+
+    const ok = await request(app).post("/communities/demo-community/x-community").send({
+      wallet: "0xlead",
+      url: "https://x.com/i/communities/123456789"
+    });
+    expect(ok.status).toBe(200);
+    expect(ok.body.xCommunity.id).toBe("123456789");
+    expect(update).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a normal tweet as proof for the X Community bonus task", async () => {
+    const createSubmission = vi.fn();
+    const app = createApp({
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "user-1", wallet: "0xdemo" }) },
+      missionTask: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "task-xc",
+          missionId: "mission-1",
+          title: "Post in the linked X Community",
+          details: "x-community:123456789",
+          actionType: ActionType.SHARE,
+          createdAt: new Date(),
+          mission: { communityId: "demo-community", priority: Priority.HIGH, status: "ACTIVE" }
+        })
+      },
+      missionClaim: { findUnique: vi.fn().mockResolvedValue({ id: "claim-1" }) },
+      submission: { create: createSubmission }
+    } as never);
+
+    const res = await request(app).post("/tasks/task-xc/submissions").send({
+      wallet: "0xdemo",
+      proofUrl: "https://x.com/user/status/1"
+    });
+    expect(res.status).toBe(400);
+    expect(createSubmission).not.toHaveBeenCalled();
+  });
+
+  it("accepts an X Community post URL for the bonus task only", async () => {
+    const createSubmission = vi.fn().mockResolvedValue({ id: "sub-xc", pointsAwarded: 12 });
+    const app = createApp({
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "user-1", wallet: "0xdemo" }) },
+      missionTask: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "task-xc",
+          missionId: "mission-1",
+          title: "Post in the linked X Community",
+          details: "x-community:123456789",
+          actionType: ActionType.SHARE,
+          createdAt: new Date(),
+          mission: { communityId: "demo-community", priority: Priority.HIGH, status: "ACTIVE" }
+        })
+      },
+      missionClaim: { findUnique: vi.fn().mockResolvedValue({ id: "claim-1" }) },
+      submission: { create: createSubmission },
+      score: { create: vi.fn(), groupBy: vi.fn().mockResolvedValue([]) },
+      engagementEvent: { create: vi.fn() },
+      leaderboardSnapshot: { create: vi.fn() },
+      communityMember: { updateMany: vi.fn() }
+    } as never);
+
+    const res = await request(app).post("/tasks/task-xc/submissions").send({
+      wallet: "0xdemo",
+      proofUrl: "https://x.com/i/communities/123456789/posts/55"
+    });
+    expect(res.status).toBe(200);
+    expect(createSubmission).toHaveBeenCalledTimes(1);
+  });
+});

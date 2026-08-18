@@ -12,7 +12,7 @@
 - GET `/communities/:id` — includes `lead` (`vacant`, `reason`, wallet, remaining inactivity window)
 - POST `/communities/:id/join`
 - POST `/communities/:id/lead/resign` — current lead steps down; community stays on the mint
-- POST `/communities/:id/lead/claim` — claim vacant lead (resigned or 48h inactive). Occupied seat returns 409. Still one community per contract.
+- POST `/communities/:id/x-community` `{ url, wallet? }` — active CTO lead binds an `x.com/i/communities/{id}` URL to this mint (unique). Shown on the token hub. Does not replace DexScreener contract identity.
 
 ## Signals / Missions
 - POST `/signals/ingest` `{ communityId? , chainId?, contractAddress?, q?, type, severity, sourceRef?, metadata? }` — if a mint is provided, the signal is routed to the community uniquely bound to that contract; ticker search is rejected; 404 if the mint is unbound
@@ -27,7 +27,7 @@
 - POST `/missions/:id/complete` — requires a connected wallet; 409 if expired/completed
 
 ## Submissions / Scoring
-- POST `/tasks/:id/submissions` `{ wallet?, proofUrl, proofText?, engagementValue? }` — Bearer token wallet wins over body; requires a mission claim first
+- POST `/tasks/:id/submissions` `{ wallet?, proofUrl, proofText?, engagementValue? }` — Bearer token wallet wins over body; requires a mission claim first. The bonus “Post in the linked X Community” task requires a proof URL from that Community; reply/KOL tasks still accept any x.com status URL.
 - POST `/submissions/:id/verify`
 - GET `/communities/:id/leaderboard`
 

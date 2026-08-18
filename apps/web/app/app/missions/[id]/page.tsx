@@ -16,6 +16,7 @@ type Submission = {
 type Task = {
   id: string;
   title: string;
+  details?: string | null;
   actionType: string;
   platform: string;
   basePoints: number;
@@ -117,7 +118,7 @@ export default async function MissionDetailsPage({ params }: { params: { id: str
                   ))}
                 </div>
               )}
-              <SubmissionForm taskId={task.id} missionId={mission.id} />
+              <SubmissionForm taskId={task.id} missionId={mission.id} taskDetails={task.details} />
             </div>
           ))}
         </>
