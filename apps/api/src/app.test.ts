@@ -260,3 +260,29 @@ describe("notification log", () => {
     expect(res.body[0].delivered).toBe(false);
   });
 });
+
+describe("SIWE wallet connect", () => {
+  it("rejects an invalid wallet on start", async () => {
+    const res = await request(createApp({} as never)).post("/auth/siwe/start").send({ wallet: "0xdemo" });
+    expect(res.status).toBe(400);
+  });
+
+  it("verifies a signed SIWE message", async () => {
+    const { generatePrivateKey, privateKeyToAccount } = await import("viem/accounts");
+    const account = privateKeyToAccount(generatePrivateKey());
+    const findUser = vi.fn().mockResolvedValue(null);
+    const createUser = vi.fn().mockResolvedValue({ id: "u1", wallet: account.address });
+    const app = createApp({ user: { findUnique: findUser, create: createUser } } as never);
+
+    const start = await request(app).post("/auth/siwe/start").send({ wallet: account.address });
+    expect(start.status).toBe(200);
+    const signature = await account.signMessage({ message: start.body.message });
+    const verify = await request(app).post("/auth/siwe/verify").send({
+      message: start.body.message,
+      signature
+    });
+    expect(verify.status).toBe(200);
+    expect(verify.body.user.wallet).toBe(account.address);
+    expect(verify.body.token).toBeTruthy();
+  });
+});

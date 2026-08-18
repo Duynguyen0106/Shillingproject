@@ -1,9 +1,9 @@
 # API (Phase 1)
 
 ## Auth / User
-- POST `/auth/siwe/start`
-- POST `/auth/siwe/verify`
-- GET `/me?wallet=`
+- POST `/auth/siwe/start` `{ wallet }` → nonce + SIWE message bound to that address
+- POST `/auth/siwe/verify` `{ message, signature }` → recovers address, returns session token
+- GET `/me` with `Authorization: Bearer <token>` or `?wallet=`
 
 ## Community
 - POST `/communities`

@@ -1,3 +1,4 @@
+import ConnectWalletButton from "./ConnectWalletButton";
 import "./globals.css";
 import Link from "next/link";
 import type { ReactNode } from "react";
@@ -13,6 +14,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           <Link href="/app/admin/signals">Signals</Link>
           <Link href="/app/admin/attribution">Attribution</Link>
           <Link href="/app/admin/notifications">Alerts</Link>
+          <ConnectWalletButton />
         </nav>
         {children}
       </body>

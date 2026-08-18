@@ -9,7 +9,7 @@ export default function ClaimButton({ missionId }: { missionId: string }) {
   const [status, setStatus] = useState("");
 
   useEffect(() => {
-    setWallet(getStoredWallet());
+    setWallet(getStoredWallet("0xdemo"));
   }, []);
 
   async function claim() {

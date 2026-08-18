@@ -12,7 +12,7 @@ export default function SubmissionForm({ taskId }: { taskId: string }) {
   const [points, setPoints] = useState<number | null>(null);
 
   useEffect(() => {
-    setWallet(getStoredWallet());
+    setWallet(getStoredWallet("0xdemo"));
   }, []);
 
   async function submit() {

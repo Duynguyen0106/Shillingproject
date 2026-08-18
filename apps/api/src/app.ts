@@ -3,10 +3,13 @@ import cors from "cors";
 import { nanoid } from "nanoid";
 import { Prisma, PrismaClient, ActionType, MissionStatus, Platform, Priority, SignalType } from "@prisma/client";
 import { computeScore } from "@shillops/scoring-engine";
+import { getAddress, isAddress, verifyMessage } from "viem";
+import type { Address, Hex } from "viem";
 import { z } from "zod";
 
 const appUrl = process.env.APP_URL || "http://localhost:3000";
 const sessions = new Map<string, { wallet: string }>();
+const siweNonces = new Map<string, { address: string; expiresAt: number }>();
 
 const actionBasePoints: Record<ActionType, number> = {
   REPLY: 10,
@@ -15,8 +18,13 @@ const actionBasePoints: Record<ActionType, number> = {
   INVITE: 8
 };
 
+const siweStartSchema = z.object({
+  wallet: z.string().min(3)
+});
+
 const siweVerifySchema = z.object({
-  wallet: z.string().min(3),
+  message: z.string().min(20),
+  signature: z.string().min(10),
   displayName: z.string().optional()
 });
 
@@ -55,6 +63,35 @@ const createLinkSchema = z.object({
 const claimSchema = z.object({
   wallet: z.string().min(3)
 });
+
+export function buildSiweMessage(input: { address: string; nonce: string; uri?: string; issuedAt?: string }): string {
+  const issuedAt = input.issuedAt ?? new Date().toISOString();
+  const checksum = getAddress(input.address);
+  return [
+    "localhost wants you to sign in with your Ethereum account:",
+    checksum,
+    "",
+    "Sign in to Shill Ops.",
+    "",
+    `URI: ${input.uri ?? appUrl}`,
+    "Version: 1",
+    "Chain ID: 1",
+    `Nonce: ${input.nonce}`,
+    `Issued At: ${issuedAt}`
+  ].join("\n");
+}
+
+function parseSiweNonce(message: string): string | null {
+  const match = message.match(/^Nonce: (\S+)$/m);
+  return match?.[1] ?? null;
+}
+
+function parseSiweAddress(message: string): Address | null {
+  const lines = message.split("\n");
+  const address = lines[1]?.trim();
+  if (!address || !isAddress(address)) return null;
+  return getAddress(address);
+}
 
 function priorityFromSeverity(severity: number): Priority {
   if (severity >= 80) return Priority.HIGH;
@@ -198,16 +235,36 @@ export function createApp(prisma: PrismaClient) {
 
   app.get("/health", (_req, res) => res.json({ ok: true }));
 
-  app.post("/auth/siwe/start", asyncRoute(async (_req, res) => {
-    res.json({ nonce: nanoid(16), message: "Sign this SIWE message to join Shill Ops" });
+  app.post("/auth/siwe/start", asyncRoute(async (req, res) => {
+    const { wallet } = siweStartSchema.parse(req.body);
+    if (!isAddress(wallet)) return res.status(400).json({ error: "Invalid wallet address" });
+    const address = getAddress(wallet);
+    const nonce = nanoid(16);
+    siweNonces.set(nonce, { address, expiresAt: Date.now() + 10 * 60 * 1000 });
+    const message = buildSiweMessage({ address, nonce });
+    res.json({ nonce, message, address });
   }));
 
   app.post("/auth/siwe/verify", asyncRoute(async (req, res) => {
-    const { wallet, displayName } = siweVerifySchema.parse(req.body);
-    let user = await prisma.user.findUnique({ where: { wallet } });
-    if (!user) user = await prisma.user.create({ data: { wallet, displayName } });
+    const { message, signature, displayName } = siweVerifySchema.parse(req.body);
+    const nonce = parseSiweNonce(message);
+    const address = parseSiweAddress(message);
+    const issued = nonce ? siweNonces.get(nonce) : undefined;
+    if (!nonce || !address || !issued || issued.expiresAt < Date.now() || issued.address !== address) {
+      return res.status(401).json({ error: "Invalid or expired SIWE nonce" });
+    }
+    const valid = await verifyMessage({
+      address,
+      message,
+      signature: signature as Hex
+    });
+    if (!valid) return res.status(401).json({ error: "Invalid signature" });
+    siweNonces.delete(nonce);
+
+    let user = await prisma.user.findUnique({ where: { wallet: address } });
+    if (!user) user = await prisma.user.create({ data: { wallet: address, displayName } });
     const token = nanoid(24);
-    sessions.set(token, { wallet });
+    sessions.set(token, { wallet: address });
     res.json({ token, user });
   }));
 
