@@ -46,17 +46,18 @@ From the UI:
 1. Click **Connect wallet** and pick Phantom, Trust, MetaMask, Coinbase, or any WalletConnect wallet.
 2. Sign the SIWE message, then join the demo community on `/`.
 3. Ingest a mock signal at `/app/admin/signals` (mission auto-creates).
-3. Open the mission from `/app` and submit proof.
-4. Confirm points on `/app/leaderboard`.
-5. Create a tracked CTA at `/app/admin/attribution` and click `/r/:code`.
+4. Open the mission from `/app`, claim it, and submit proof.
+5. Confirm points on `/app/me` and `/app/leaderboard`.
+6. Create a tracked CTA at `/app/admin/attribution` and click `/r/:code`.
 
 From the API:
 
 1. `POST /signals/ingest`
 2. Mission is auto-created with idempotency on signal dedupe key.
-3. `POST /tasks/:id/submissions`
-4. `GET /communities/:id/leaderboard`
-5. `POST /links` then `GET /r/:code`
+3. `POST /missions/:id/claim`
+4. `POST /tasks/:id/submissions`
+5. `GET /me` and `GET /communities/:id/leaderboard`
+6. `POST /links` then `GET /r/:code`
 
 ## Notification templates
 

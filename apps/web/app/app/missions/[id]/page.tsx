@@ -3,17 +3,31 @@ import ClaimButton from "./ClaimButton";
 import CompleteMissionButton from "./CompleteMissionButton";
 import SubmissionForm from "./SubmissionForm";
 
+type Submission = {
+  id: string;
+  proofUrl: string;
+  pointsAwarded: number;
+  user?: { wallet: string; displayName?: string | null };
+};
+
 type Task = {
   id: string;
   title: string;
   actionType: string;
   platform: string;
   basePoints: number;
+  submissions?: Submission[];
 };
 
 type ShortLink = {
   code: string;
   targetUrl: string;
+  clicks?: number;
+};
+
+type Claim = {
+  id: string;
+  user?: { wallet: string; displayName?: string | null };
 };
 
 type Mission = {
@@ -26,7 +40,8 @@ type Mission = {
   tasks: Task[];
   signal?: { type: string; severity: number } | null;
   shortLinks?: ShortLink[];
-  claims?: { id: string }[];
+  claims?: Claim[];
+  claimsCount?: number;
 };
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:4000";
@@ -43,7 +58,7 @@ export default async function MissionDetailsPage({ params }: { params: { id: str
         <span>Urgency: {mission.urgency}</span>
         <span>Status: {mission.status}</span>
         {mission.signal && <span>Signal: {mission.signal.type}</span>}
-        <span>Claims: {mission.claims?.length ?? 0}</span>
+        <span>Claims: {mission.claimsCount ?? mission.claims?.length ?? 0}</span>
       </div>
       {tracked && (
         <div className="card">
@@ -53,6 +68,7 @@ export default async function MissionDetailsPage({ params }: { params: { id: str
               {API_BASE}/r/{tracked.code}
             </a>
           </p>
+          <p className="muted">{tracked.clicks ?? 0} clicks attributed</p>
         </div>
       )}
       <ClaimButton missionId={mission.id} />
@@ -61,7 +77,18 @@ export default async function MissionDetailsPage({ params }: { params: { id: str
         <div key={task.id} className="card">
           <h3>{task.title}</h3>
           <p>{task.actionType} on {task.platform} · Base points {task.basePoints}</p>
-          <SubmissionForm taskId={task.id} />
+          {(task.submissions?.length ?? 0) > 0 && (
+            <div>
+              <p className="muted">Recent proofs</p>
+              {task.submissions?.map((submission) => (
+                <p key={submission.id}>
+                  {submission.user?.displayName || submission.user?.wallet || "Contributor"} · {submission.pointsAwarded} pts ·{" "}
+                  <a href={submission.proofUrl} target="_blank" rel="noreferrer">proof</a>
+                </p>
+              ))}
+            </div>
+          )}
+          <SubmissionForm taskId={task.id} missionId={mission.id} />
         </div>
       ))}
     </main>

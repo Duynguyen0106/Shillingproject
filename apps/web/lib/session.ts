@@ -52,3 +52,8 @@ export function authHeaders(): Record<string, string> {
   if (token) headers.authorization = `Bearer ${token}`;
   return headers;
 }
+
+export function notifyOps() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event("shillops-ops"));
+}

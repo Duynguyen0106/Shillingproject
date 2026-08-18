@@ -3,7 +3,7 @@
 ## Auth / User
 - POST `/auth/siwe/start` `{ wallet }` → nonce + SIWE message bound to that address
 - POST `/auth/siwe/verify` `{ message, signature }` → recovers address, returns session token
-- GET `/me` with `Authorization: Bearer <token>` or `?wallet=`
+- GET `/me` with `Authorization: Bearer <token>` or `?wallet=` — includes points, rank, claims, and submissions for `?communityId=`
 
 ## Community
 - POST `/communities`
@@ -20,7 +20,7 @@
 - POST `/missions/:id/complete`
 
 ## Submissions / Scoring
-- POST `/tasks/:id/submissions` `{ wallet?, proofUrl, proofText?, engagementValue? }` — Bearer token wallet wins over body
+- POST `/tasks/:id/submissions` `{ wallet?, proofUrl, proofText?, engagementValue? }` — Bearer token wallet wins over body; requires a mission claim first
 - POST `/submissions/:id/verify`
 - GET `/communities/:id/leaderboard`
 

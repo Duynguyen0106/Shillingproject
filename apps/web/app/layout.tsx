@@ -10,6 +10,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <nav className="nav">
           <Link href="/" className="brand">Shill Ops</Link>
           <Link href="/app">Missions</Link>
+          <Link href="/app/me">My Ops</Link>
           <Link href="/app/leaderboard">Leaderboard</Link>
           <Link href="/app/admin/signals">Signals</Link>
           <Link href="/app/admin/attribution">Attribution</Link>

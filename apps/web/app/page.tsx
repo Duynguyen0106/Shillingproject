@@ -12,6 +12,7 @@ export default function HomePage() {
         </p>
         <div className="row" style={{ margin: "18px 0 24px" }}>
           <Link href="/app" className="btn">Open Mission Board</Link>
+          <Link href="/app/me" className="btn secondary">My Ops</Link>
           <Link href="/app/admin/signals" className="btn secondary">Ingest a signal</Link>
         </div>
       </section>

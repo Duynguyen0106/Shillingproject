@@ -151,3 +151,20 @@ label {
 .wallet-option .wallet-meta small {
   margin-left: 0;
 }
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin: 16px 0 20px;
+}
+.stat {
+  border: 1px solid #27272a;
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: #111114cc;
+}
+.stat strong {
+  display: block;
+  font-size: 28px;
+  margin-top: 4px;
+}

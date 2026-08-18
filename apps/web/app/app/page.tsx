@@ -9,6 +9,8 @@ type Mission = {
   priority: string;
   urgency: number;
   status: string;
+  claimsCount?: number;
+  shortLinks?: { code: string; clicks?: number }[];
 };
 
 export default async function MissionBoardPage() {
@@ -33,6 +35,8 @@ export default async function MissionBoardPage() {
             <span className={`badge ${m.priority === "HIGH" ? "high" : ""}`}>Priority: {m.priority}</span>
             <span>Urgency: {m.urgency}</span>
             <span>Status: {m.status}</span>
+            <span>Claims: {m.claimsCount ?? 0}</span>
+            {typeof m.shortLinks?.[0]?.clicks === "number" && <span>Clicks: {m.shortLinks[0].clicks}</span>}
             <Link href={`/app/missions/${m.id}`}>Open mission</Link>
           </div>
         </div>

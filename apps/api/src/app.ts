@@ -238,6 +238,15 @@ function resolveActorWallet(req: Request, bodyWallet?: string): string | undefin
   return walletFromAuth(req) || bodyWallet;
 }
 
+function serializeShortLinks<T extends { code: string; targetUrl: string; missionId?: string | null; _count?: { clicks: number } }>(links: T[]) {
+  return links.map((link) => ({
+    code: link.code,
+    targetUrl: link.targetUrl,
+    missionId: link.missionId,
+    clicks: link._count?.clicks ?? 0
+  }));
+}
+
 export function createApp(prisma: PrismaClient) {
   const app = express();
   app.use(cors());
@@ -279,12 +288,69 @@ export function createApp(prisma: PrismaClient) {
   }));
 
   app.get("/me", asyncRoute(async (req, res) => {
-    const auth = req.get("authorization")?.replace("Bearer ", "");
-    const wallet = auth ? sessions.get(auth)?.wallet : String(req.query.wallet || "");
-    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
+    const header = req.get("authorization");
+    let wallet = "";
+    if (header) {
+      const token = header.replace(/^Bearer\s+/i, "").trim();
+      wallet = sessions.get(token)?.wallet ?? "";
+      if (!wallet) return res.status(401).json({ error: "Unauthorized" });
+    } else {
+      wallet = String(req.query.wallet || "");
+      if (!wallet) return res.status(401).json({ error: "Unauthorized" });
+    }
     const user = await prisma.user.findUnique({ where: { wallet } });
     if (!user) return res.status(404).json({ error: "User not found" });
-    res.json(user);
+    const communityId = String(req.query.communityId || process.env.DEMO_COMMUNITY_ID || "demo-community");
+
+    const [claims, submissions, scoreAgg, leaderboard] = await Promise.all([
+      prisma.missionClaim.findMany({
+        where: { userId: user.id, mission: { communityId } },
+        include: { mission: { select: { id: true, title: true, status: true, priority: true, urgency: true } } },
+        orderBy: { claimedAt: "desc" }
+      }),
+      prisma.submission.findMany({
+        where: { userId: user.id, task: { mission: { communityId } } },
+        include: { task: { select: { id: true, title: true, missionId: true, mission: { select: { title: true } } } } },
+        orderBy: { submittedAt: "desc" }
+      }),
+      prisma.score.aggregate({
+        where: { userId: user.id, communityId },
+        _sum: { points: true }
+      }),
+      prisma.score.groupBy({
+        by: ["userId"],
+        where: { communityId },
+        _sum: { points: true },
+        orderBy: { _sum: { points: "desc" } }
+      })
+    ]);
+
+    const rankIndex = leaderboard.findIndex((row) => row.userId === user.id);
+    res.json({
+      ...user,
+      communityId,
+      points: scoreAgg._sum.points ?? 0,
+      rank: rankIndex >= 0 ? rankIndex + 1 : null,
+      claimedMissionIds: claims.map((claim) => claim.missionId),
+      claims: claims.map((claim) => ({
+        missionId: claim.mission.id,
+        title: claim.mission.title,
+        status: claim.mission.status,
+        priority: claim.mission.priority,
+        claimedAt: claim.claimedAt
+      })),
+      submissions: submissions.map((submission) => ({
+        id: submission.id,
+        taskId: submission.taskId,
+        taskTitle: submission.task.title,
+        missionId: submission.task.missionId,
+        missionTitle: submission.task.mission.title,
+        proofUrl: submission.proofUrl,
+        pointsAwarded: submission.pointsAwarded,
+        isVerified: submission.isVerified,
+        submittedAt: submission.submittedAt
+      }))
+    });
   }));
 
   app.post("/communities", asyncRoute(async (req, res) => {
@@ -340,10 +406,18 @@ export function createApp(prisma: PrismaClient) {
     const status = (req.query.status as string | undefined)?.toUpperCase();
     const missions = await prisma.mission.findMany({
       where: { communityId: req.params.id, status: status ? (status as MissionStatus) : MissionStatus.ACTIVE },
-      include: { tasks: true, shortLinks: true },
+      include: {
+        tasks: true,
+        shortLinks: { include: { _count: { select: { clicks: true } } } },
+        _count: { select: { claims: true } }
+      },
       orderBy: { createdAt: "desc" }
     });
-    res.json(missions);
+    res.json(missions.map((mission) => ({
+      ...mission,
+      claimsCount: mission._count.claims,
+      shortLinks: serializeShortLinks(mission.shortLinks)
+    })));
   }));
 
   app.post("/signals/:id/create-mission", asyncRoute(async (req, res) => {
@@ -362,10 +436,29 @@ export function createApp(prisma: PrismaClient) {
   app.get("/missions/:id", asyncRoute(async (req, res) => {
     const mission = await prisma.mission.findUnique({
       where: { id: req.params.id },
-      include: { tasks: true, signal: true, shortLinks: true, claims: true }
+      include: {
+        tasks: {
+          include: {
+            submissions: {
+              include: { user: { select: { wallet: true, displayName: true } } },
+              orderBy: { submittedAt: "desc" }
+            }
+          }
+        },
+        signal: true,
+        shortLinks: { include: { _count: { select: { clicks: true } } } },
+        claims: {
+          include: { user: { select: { wallet: true, displayName: true } } },
+          orderBy: { claimedAt: "desc" }
+        }
+      }
     });
     if (!mission) return res.status(404).json({ error: "Mission not found" });
-    res.json(mission);
+    res.json({
+      ...mission,
+      claimsCount: mission.claims.length,
+      shortLinks: serializeShortLinks(mission.shortLinks)
+    });
   }));
 
   app.post("/missions/:id/claim", asyncRoute(async (req, res) => {
@@ -397,6 +490,10 @@ export function createApp(prisma: PrismaClient) {
     if (!user) user = await prisma.user.create({ data: { wallet } });
     const task = await prisma.missionTask.findUnique({ where: { id: req.params.id }, include: { mission: true } });
     if (!task) return res.status(404).json({ error: "Task not found" });
+    const claim = await prisma.missionClaim.findUnique({
+      where: { missionId_userId: { missionId: task.missionId, userId: user.id } }
+    });
+    if (!claim) return res.status(403).json({ error: "Claim this mission before submitting proof" });
     const isEarly = Date.now() - task.createdAt.getTime() < 10 * 60 * 1000;
     const duplicatePenalty = Boolean(proofText && proofText.length > 0 && proofText.toLowerCase().includes("copy"));
     const points = scoreSubmission({ actionType: task.actionType, priority: task.mission.priority, isEarly, duplicatePenalty, engagementValue });

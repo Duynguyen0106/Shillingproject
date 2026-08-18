@@ -32,6 +32,10 @@ async function main() {
   const taskId = mission?.tasks?.[0]?.id;
   if (!taskId) throw new Error("No mission task found");
 
+  await post(`/missions/${missionId}/claim`, {
+    wallet: "0xsmoke0001"
+  });
+
   await post(`/tasks/${taskId}/submissions`, {
     wallet: "0xsmoke0001",
     proofUrl: "https://x.com/example/smoke",
@@ -47,6 +51,7 @@ async function main() {
 
   const leaderboard = await get(`/communities/${COMMUNITY_ID}/leaderboard`);
   const attribution = await get(`/communities/${COMMUNITY_ID}/attribution`);
+  const me = await get(`/me?wallet=0xsmoke0001&communityId=${COMMUNITY_ID}`);
 
   console.log(
     JSON.stringify(
@@ -56,7 +61,9 @@ async function main() {
         taskId,
         shortCode: link.code,
         leaderboardTop: leaderboard[0] ?? null,
-        attributionCount: attribution.length
+        attributionCount: attribution.length,
+        myPoints: me.points,
+        myRank: me.rank
       },
       null,
       2

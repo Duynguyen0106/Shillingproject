@@ -195,6 +195,7 @@ describe("submissions", () => {
     const createUser = vi.fn().mockResolvedValue({ id: "user-1", wallet: "0xdemo" });
     const findTask = vi.fn().mockResolvedValue({
       id: "task-1",
+      missionId: "mission-1",
       title: "Reply with narrative",
       actionType: ActionType.REPLY,
       createdAt: new Date(),
@@ -205,10 +206,12 @@ describe("submissions", () => {
     const createEngagement = vi.fn().mockResolvedValue({});
     const groupBy = vi.fn().mockResolvedValue([{ userId: "user-1", _sum: { points: 18 } }]);
     const createSnapshot = vi.fn().mockResolvedValue({});
+    const findClaim = vi.fn().mockResolvedValue({ id: "claim-1", missionId: "mission-1", userId: "user-1" });
 
     const app = createApp({
       user: { findUnique: findUser, create: createUser },
       missionTask: { findUnique: findTask },
+      missionClaim: { findUnique: findClaim },
       submission: { create: createSubmission },
       score: { create: createScore, groupBy },
       engagementEvent: { create: createEngagement },
@@ -228,6 +231,30 @@ describe("submissions", () => {
     expect(createScore.mock.calls[0][0].data.communityId).toBe("demo-community");
     expect(createEngagement).toHaveBeenCalledTimes(1);
     expect(createSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects proof until the mission is claimed", async () => {
+    const app = createApp({
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "user-1", wallet: "0xdemo" }) },
+      missionTask: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "task-1",
+          missionId: "mission-1",
+          title: "Reply with narrative",
+          actionType: ActionType.REPLY,
+          createdAt: new Date(),
+          mission: { communityId: "demo-community", priority: Priority.HIGH }
+        })
+      },
+      missionClaim: { findUnique: vi.fn().mockResolvedValue(null) },
+      submission: { create: vi.fn() }
+    } as never);
+
+    const res = await request(app).post("/tasks/task-1/submissions").send({
+      wallet: "0xdemo",
+      proofUrl: "https://x.com/example/status/1"
+    });
+    expect(res.status).toBe(403);
   });
 });
 
@@ -320,5 +347,70 @@ describe("SIWE wallet connect", () => {
     expect(verify.status).toBe(200);
     expect(verify.body.user.wallet).toBe(account.address);
     expect(verify.body.token).toBeTruthy();
+  });
+});
+
+describe("contributor profile", () => {
+  it("returns points, rank, claims, and submissions", async () => {
+    const app = createApp({
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "u1", wallet: "0xabc", displayName: "Raider" }) },
+      missionClaim: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            missionId: "m1",
+            claimedAt: "2026-08-18T00:00:00.000Z",
+            mission: { id: "m1", title: "Spike", status: "ACTIVE", priority: "HIGH", urgency: 80 }
+          }
+        ])
+      },
+      submission: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: "s1",
+            taskId: "t1",
+            proofUrl: "https://x.com/p",
+            pointsAwarded: 18,
+            isVerified: true,
+            submittedAt: "2026-08-18T00:00:00.000Z",
+            task: { id: "t1", title: "Reply", missionId: "m1", mission: { title: "Spike" } }
+          }
+        ])
+      },
+      score: {
+        aggregate: vi.fn().mockResolvedValue({ _sum: { points: 18 } }),
+        groupBy: vi.fn().mockResolvedValue([
+          { userId: "u0", _sum: { points: 50 } },
+          { userId: "u1", _sum: { points: 18 } }
+        ])
+      }
+    } as never);
+
+    const res = await request(app).get("/me?wallet=0xabc&communityId=demo-community");
+    expect(res.status).toBe(200);
+    expect(res.body.points).toBe(18);
+    expect(res.body.rank).toBe(2);
+    expect(res.body.claimedMissionIds).toEqual(["m1"]);
+    expect(res.body.submissions[0].pointsAwarded).toBe(18);
+  });
+
+  it("includes click counts on mission details", async () => {
+    const app = createApp({
+      mission: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "m1",
+          title: "Spike",
+          description: "Boost it",
+          tasks: [],
+          signal: null,
+          shortLinks: [{ code: "abc12345", targetUrl: "https://x.com", missionId: "m1", _count: { clicks: 4 } }],
+          claims: [{ id: "c1", user: { wallet: "0xabc", displayName: "Raider" } }]
+        })
+      }
+    } as never);
+
+    const res = await request(app).get("/missions/m1");
+    expect(res.status).toBe(200);
+    expect(res.body.claimsCount).toBe(1);
+    expect(res.body.shortLinks[0].clicks).toBe(4);
   });
 });

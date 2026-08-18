@@ -3,12 +3,13 @@
 import { useState } from "react";
 import ConnectWalletButton from "../../../ConnectWalletButton";
 import { API_BASE } from "../../../../lib/config";
-import { authHeaders } from "../../../../lib/session";
-import { useConnectedWallet } from "../../../../lib/useConnectedWallet";
+import { authHeaders, notifyOps } from "../../../../lib/session";
+import { useContributorProfile } from "../../../../lib/useContributorProfile";
 
 export default function ClaimButton({ missionId }: { missionId: string }) {
-  const { wallet, label, connected } = useConnectedWallet();
+  const { wallet, label, connected, profile } = useContributorProfile();
   const [status, setStatus] = useState("");
+  const claimed = Boolean(profile?.claimedMissionIds?.includes(missionId));
 
   async function claim() {
     if (!wallet) {
@@ -21,7 +22,12 @@ export default function ClaimButton({ missionId }: { missionId: string }) {
       headers: authHeaders(),
       body: JSON.stringify({ wallet })
     });
-    setStatus(res.ok ? "Mission claimed." : "Claim failed.");
+    if (res.ok) {
+      notifyOps();
+      setStatus("Mission claimed. Submit proof to earn points.");
+    } else {
+      setStatus("Claim failed.");
+    }
   }
 
   if (!connected) {
@@ -31,6 +37,19 @@ export default function ClaimButton({ missionId }: { missionId: string }) {
         <p className="muted">Connect a wallet, then claim with that address.</p>
         <ConnectWalletButton />
         {status && <p>{status}</p>}
+      </div>
+    );
+  }
+
+  if (claimed) {
+    return (
+      <div className="card">
+        <h3>Mission claimed</h3>
+        <p className="muted">
+          {label ? `${label} · ` : ""}
+          <code>{wallet}</code> is on this mission. Submit proof below.
+        </p>
+        <p>{status}</p>
       </div>
     );
   }

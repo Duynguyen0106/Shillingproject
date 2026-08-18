@@ -1,4 +1,5 @@
 import Link from "next/link";
+import YouBadge from "../../YouBadge";
 import { apiGetSafe } from "../../../lib/api";
 import { COMMUNITY_ID } from "../../../lib/config";
 
@@ -26,7 +27,7 @@ export default async function LeaderboardPage() {
         <div key={row.rank} className="card row">
           <div className="rank">#{row.rank}</div>
           <div>
-            <strong>{row.displayName || row.wallet}</strong>
+            <strong>{row.displayName || row.wallet} <YouBadge wallet={row.wallet} /></strong>
             <div className="muted">{row.wallet}</div>
           </div>
           <div style={{ marginLeft: "auto" }}>{row.points} pts</div>
