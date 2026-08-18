@@ -11,6 +11,7 @@ export default function SignalIngestForm() {
   const [type, setType] = useState<(typeof SIGNAL_TYPES)[number]>("MENTION_SPIKE");
   const [severity, setSeverity] = useState(80);
   const [sourceRef, setSourceRef] = useState(`demo-${Date.now()}`);
+  const [targetUrl, setTargetUrl] = useState("");
   const [ticker, setTicker] = useState("PEPE");
   const [spikePct, setSpikePct] = useState("28");
   const [token, setToken] = useState("PEPE");
@@ -37,10 +38,10 @@ export default function SignalIngestForm() {
     setBindPath(null);
     const metadata =
       type === "WHALE_BUY"
-        ? { token }
+        ? { token, ...(targetUrl.trim() ? { targetUrl: targetUrl.trim() } : {}) }
         : type === "MENTION_SPIKE"
-          ? { ticker, spikePct: Number(spikePct) }
-          : { ticker };
+          ? { ticker, spikePct: Number(spikePct), ...(targetUrl.trim() ? { targetUrl: targetUrl.trim() } : {}) }
+          : { ticker, ...(targetUrl.trim() ? { targetUrl: targetUrl.trim() } : {}) };
 
     const payload = mint.trim()
       ? {
@@ -87,7 +88,7 @@ export default function SignalIngestForm() {
     <div className="card">
       <h3>Ingest mock signal</h3>
       <p className="muted">
-        Paste the DexScreener URL or `chain:contract`. Tickers are rejected so a cloned CTO cannot steal the raid.
+        Paste the DexScreener URL or `chain:contract`. Add the X post to reply to — the app does not scrape X or find KOL tweets by itself.
       </p>
       <label>
         Contract or DexScreener URL
@@ -112,6 +113,14 @@ export default function SignalIngestForm() {
       <label>
         Source ref (idempotency key part)
         <input value={sourceRef} onChange={(e) => setSourceRef(e.target.value)} />
+      </label>
+      <label>
+        Target post or thread URL
+        <input
+          value={targetUrl}
+          onChange={(e) => setTargetUrl(e.target.value)}
+          placeholder="https://x.com/user/status/… (where raiders should reply or quote)"
+        />
       </label>
       {type === "WHALE_BUY" ? (
         <label>

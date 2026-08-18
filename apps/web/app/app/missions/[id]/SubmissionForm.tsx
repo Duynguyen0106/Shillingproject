@@ -17,7 +17,7 @@ export default function SubmissionForm({
   taskDetails?: string | null;
 }) {
   const { wallet, label, connected, profile } = useContributorProfile();
-  const xCommunityId = taskDetails?.startsWith("x-community:") ? taskDetails.slice("x-community:".length) : null;
+  const xCommunityId = taskDetails?.startsWith("x-community:") ? taskDetails.slice("x-community:".length).split("\n")[0] : null;
   const [proofUrl, setProofUrl] = useState(proofPlaceholder(taskDetails));
   const [proofText, setProofText] = useState("");
   const [status, setStatus] = useState("");

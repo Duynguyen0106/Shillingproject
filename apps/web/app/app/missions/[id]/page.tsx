@@ -32,6 +32,7 @@ type Mission = {
   remainingMs?: number | null;
   communityId?: string;
   warRoom?: WarRoomData;
+  raidTarget?: string | null;
 };
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:4000";
@@ -57,6 +58,15 @@ export default async function MissionDetailsPage({ params }: { params: { id: str
         <span>Claims: {mission.claimsCount ?? mission.claims?.length ?? 0}</span>
         {typeof mission.remainingMs === "number" && <span>{formatRemaining(mission.remainingMs)}</span>}
       </div>
+      {mission.raidTarget && (
+        <div className="card">
+          <strong>Reply / quote this post</strong>
+          <p>
+            <a href={mission.raidTarget} target="_blank" rel="noreferrer">{mission.raidTarget}</a>
+          </p>
+          <p className="muted">This URL was attached when the signal was ingested. The app does not search X for you.</p>
+        </div>
+      )}
       <WarRoom
         missionId={mission.id}
         communityId={mission.communityId}

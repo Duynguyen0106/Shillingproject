@@ -32,6 +32,9 @@ export type DealContext = {
   signalType?: SignalType | null;
   xCommunityId?: string | null;
   dexUrl?: string | null;
+  targetUrl?: string | null;
+  telegramUrl?: string | null;
+  discordUrl?: string | null;
   pulse?: boolean;
 };
 
@@ -51,17 +54,42 @@ export function isPlayId(value: string): value is PlayId {
   return PLAY_IDS.includes(value as PlayId);
 }
 
-export function playDetails(id: PlayId, extra?: string): string {
-  if (id === "x-community" && extra) return xCommunityTaskDetails(extra);
-  return `${PLAY_PREFIX}${id}`;
+export function httpUrl(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const url = value.trim();
+  if (!/^https?:\/\//i.test(url)) return null;
+  if (url.includes("\n") || url.includes("\r")) return null;
+  return url;
+}
+
+export function extractSignalTarget(meta: Record<string, unknown>, sourceRef?: string | null): string | null {
+  return httpUrl(meta.targetUrl) || httpUrl(meta.tweetUrl) || httpUrl(meta.postUrl) || httpUrl(meta.url) || httpUrl(sourceRef);
+}
+
+export function playDetails(id: PlayId, extra?: { xCommunityId?: string | null; targetUrl?: string | null }): string {
+  if (id === "x-community" && extra?.xCommunityId) return xCommunityTaskDetails(extra.xCommunityId);
+  const targetUrl = httpUrl(extra?.targetUrl);
+  return targetUrl ? `${PLAY_PREFIX}${id}\ntarget:${targetUrl}` : `${PLAY_PREFIX}${id}`;
 }
 
 export function playIdFromDetails(details?: string | null): PlayId | null {
   if (!details) return null;
-  if (details.startsWith(X_COMMUNITY_TASK_PREFIX)) return "x-community";
-  if (!details.startsWith(PLAY_PREFIX)) return null;
-  const id = details.slice(PLAY_PREFIX.length).split(";")[0];
+  const head = details.split("\n")[0];
+  if (head.startsWith(X_COMMUNITY_TASK_PREFIX)) return "x-community";
+  if (!head.startsWith(PLAY_PREFIX)) return null;
+  const id = head.slice(PLAY_PREFIX.length).split(";")[0];
   return isPlayId(id) ? id : null;
+}
+
+export function targetUrlFromDetails(details?: string | null): string | null {
+  if (!details) return null;
+  const head = details.split("\n")[0];
+  if (head.startsWith(X_COMMUNITY_TASK_PREFIX)) {
+    const id = head.slice(X_COMMUNITY_TASK_PREFIX.length);
+    return /^\d+$/.test(id) ? `https://x.com/i/communities/${id}` : null;
+  }
+  const line = details.split("\n").find((entry) => entry.startsWith("target:"));
+  return httpUrl(line?.slice("target:".length));
 }
 
 export function utcPulseKey(communityId: string, now = new Date()): string {
@@ -72,11 +100,11 @@ function play(input: DealtPlay): DealtPlay {
   return input;
 }
 
-function replyNarrative(): DealtPlay {
+function replyNarrative(targetUrl?: string | null): DealtPlay {
   return play({
     id: "reply-narrative",
     title: "Reply the narrative",
-    details: playDetails("reply-narrative"),
+    details: playDetails("reply-narrative", { targetUrl }),
     actionType: ActionType.REPLY,
     platform: Platform.X,
     basePoints: 10,
@@ -84,11 +112,11 @@ function replyNarrative(): DealtPlay {
   });
 }
 
-function shareTelegram(): DealtPlay {
+function shareTelegram(targetUrl?: string | null): DealtPlay {
   return play({
     id: "share-telegram",
     title: "Share in Telegram",
-    details: playDetails("share-telegram"),
+    details: playDetails("share-telegram", { targetUrl }),
     actionType: ActionType.SHARE,
     platform: Platform.TELEGRAM,
     basePoints: 6,
@@ -112,7 +140,7 @@ function xCommunityPlay(xCommunityId: string): DealtPlay {
   return play({
     id: "x-community",
     title: "Post in the linked X Community",
-    details: playDetails("x-community", xCommunityId),
+    details: playDetails("x-community", { xCommunityId }),
     actionType: ActionType.SHARE,
     platform: Platform.X,
     basePoints: 8,
@@ -120,11 +148,11 @@ function xCommunityPlay(xCommunityId: string): DealtPlay {
   });
 }
 
-function dexComment(): DealtPlay {
+function dexComment(targetUrl?: string | null): DealtPlay {
   return play({
     id: "dex-comment",
     title: "Comment on the DexScreener pair",
-    details: playDetails("dex-comment"),
+    details: playDetails("dex-comment", { targetUrl }),
     actionType: ActionType.SHARE,
     platform: Platform.X,
     basePoints: 6,
@@ -132,11 +160,11 @@ function dexComment(): DealtPlay {
   });
 }
 
-function discordBoost(): DealtPlay {
+function discordBoost(targetUrl?: string | null): DealtPlay {
   return play({
     id: "discord-boost",
     title: "Boost the Discord raid channel",
-    details: playDetails("discord-boost"),
+    details: playDetails("discord-boost", { targetUrl }),
     actionType: ActionType.BOOST,
     platform: Platform.DISCORD,
     basePoints: 4,
@@ -144,11 +172,11 @@ function discordBoost(): DealtPlay {
   });
 }
 
-function fudRatio(): DealtPlay {
+function fudRatio(targetUrl?: string | null): DealtPlay {
   return play({
     id: "fud-ratio",
     title: "Reply FUD with the mint",
-    details: playDetails("fud-ratio"),
+    details: playDetails("fud-ratio", { targetUrl }),
     actionType: ActionType.REPLY,
     platform: Platform.X,
     basePoints: 10,
@@ -156,11 +184,11 @@ function fudRatio(): DealtPlay {
   });
 }
 
-function dailyPulsePlay(): DealtPlay {
+function dailyPulsePlay(targetUrl?: string | null): DealtPlay {
   return play({
     id: "daily-pulse",
     title: "Post the daily pulse",
-    details: playDetails("daily-pulse"),
+    details: playDetails("daily-pulse", { targetUrl }),
     actionType: ActionType.SHARE,
     platform: Platform.X,
     basePoints: 6,
@@ -168,7 +196,7 @@ function dailyPulsePlay(): DealtPlay {
   });
 }
 
-function quoteSignal(type: SignalType): DealtPlay {
+function quoteSignal(type: SignalType, targetUrl?: string | null): DealtPlay {
   const title =
     type === SignalType.KOL_POST
       ? "Quote the KOL post"
@@ -178,7 +206,7 @@ function quoteSignal(type: SignalType): DealtPlay {
   return play({
     id: "quote-signal",
     title,
-    details: playDetails("quote-signal"),
+    details: playDetails("quote-signal", { targetUrl }),
     actionType: ActionType.SHARE,
     platform: Platform.X,
     basePoints: 6,
@@ -186,8 +214,8 @@ function quoteSignal(type: SignalType): DealtPlay {
   });
 }
 
-function overlayFor(type: SignalType): DealtPlay {
-  return quoteSignal(type);
+function overlayFor(type: SignalType, targetUrl?: string | null): DealtPlay {
+  return quoteSignal(type, targetUrl);
 }
 
 export function dealPlays(ctx: DealContext): DealtPlay[] {
@@ -200,23 +228,23 @@ export function dealPlays(ctx: DealContext): DealtPlay[] {
   };
 
   if (ctx.pulse) {
-    add(dailyPulsePlay());
-    add(replyNarrative());
-    add(shareTelegram());
+    add(dailyPulsePlay(ctx.targetUrl));
+    add(replyNarrative(ctx.targetUrl));
+    add(shareTelegram(ctx.telegramUrl));
     if (ctx.xCommunityId) add(xCommunityPlay(ctx.xCommunityId));
     add(inviteRaider());
-    if (ctx.dexUrl) add(dexComment());
+    if (ctx.dexUrl) add(dexComment(ctx.dexUrl));
     return dealt;
   }
 
-  add(replyNarrative());
-  if (ctx.signalType) add(overlayFor(ctx.signalType));
-  add(shareTelegram());
+  add(replyNarrative(ctx.targetUrl));
+  if (ctx.signalType) add(overlayFor(ctx.signalType, ctx.targetUrl));
+  add(shareTelegram(ctx.telegramUrl));
   if (ctx.xCommunityId) add(xCommunityPlay(ctx.xCommunityId));
   add(inviteRaider());
-  if (ctx.dexUrl) add(dexComment());
-  if (ctx.signalType === SignalType.MENTION_SPIKE) add(discordBoost());
-  if (ctx.signalType === SignalType.KOL_POST) add(fudRatio());
+  if (ctx.dexUrl) add(dexComment(ctx.dexUrl));
+  if (ctx.signalType === SignalType.MENTION_SPIKE) add(discordBoost(ctx.discordUrl));
+  if (ctx.signalType === SignalType.KOL_POST) add(fudRatio(ctx.targetUrl));
   return dealt;
 }
 

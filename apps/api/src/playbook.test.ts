@@ -3,8 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   PLAY_MAX,
   dealPlays,
+  extractSignalTarget,
   nextUnsubmittedTask,
   playIdFromDetails,
+  targetUrlFromDetails,
   utcPulseKey
 } from "./playbook";
 
@@ -90,8 +92,26 @@ describe("playbook dealer", () => {
 
   it("stores play ids in task details without breaking X Community proof details", () => {
     expect(playIdFromDetails("play:quote-signal")).toBe("quote-signal");
+    expect(playIdFromDetails("play:quote-signal\ntarget:https://x.com/user/status/1")).toBe("quote-signal");
     expect(playIdFromDetails("x-community:123456789")).toBe("x-community");
     expect(playIdFromDetails(null)).toBeNull();
+  });
+
+  it("attaches a raid target to reply and quote when a post URL is ingested", () => {
+    const plays = dealPlays({
+      signalType: SignalType.KOL_POST,
+      targetUrl: "https://x.com/kol/status/42"
+    });
+    const quote = plays.find((play) => play.id === "quote-signal");
+    expect(quote?.details).toContain("target:https://x.com/kol/status/42");
+    expect(targetUrlFromDetails(quote?.details)).toBe("https://x.com/kol/status/42");
+    expect(targetUrlFromDetails("x-community:123456789")).toBe("https://x.com/i/communities/123456789");
+  });
+
+  it("reads a tweet URL from signal metadata or sourceRef, not by scraping X", () => {
+    expect(extractSignalTarget({ tweetUrl: "https://x.com/a/status/1" })).toBe("https://x.com/a/status/1");
+    expect(extractSignalTarget({}, "https://x.com/a/status/2")).toBe("https://x.com/a/status/2");
+    expect(extractSignalTarget({ ticker: "PEPE" }, "demo-1")).toBeNull();
   });
 
   it("uses expected action types for standing plays", () => {

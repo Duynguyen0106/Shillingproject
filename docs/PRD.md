@@ -11,3 +11,5 @@ Each mission has a short war room: the lead pins one narrative line, joined wall
 The CTO lead can bind one X Community URL to the mint. It shows on the token hub. New missions then include a bonus “post in that Community” task. Main raid proofs stay any X status URL so reply-guying is not blocked.
 
 Missions are dealt from a finite playbook, not an infinite task dump. Standing plays (reply the narrative, Telegram share, invite, plus X Community / Dex comment when those URLs are bound) do not wait on live X posts, KOL mentions, or volume. A daily pulse is auto-created when the board would otherwise be empty. Triggered overlays (quote the KOL/mention/pump) are added only when a matching signal is ingested. Ingest is still mock/admin today; a real crawler would use the same `/signals/ingest` bus. Each wallet gets a personal next-play order on a claimed mission.
+
+The app does not scrape X to discover where to reply. Raid destinations come from bound community URLs (X Community, DexScreener pair) or from a post URL attached on ingest (`metadata.targetUrl`). The war-room pin is what to say, not a search for the thread.

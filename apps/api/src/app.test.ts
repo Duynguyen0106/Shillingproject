@@ -208,6 +208,41 @@ describe("signal to mission flow", () => {
     ]);
   });
 
+  it("stores the ingested X post URL on reply and quote plays", async () => {
+    const createMission = vi.fn().mockResolvedValue({
+      id: "mission-target",
+      title: "KOL POST response",
+      priority: Priority.HIGH,
+      shortLinks: []
+    });
+    const upsertSignal = vi.fn().mockImplementation(async ({ create }: { create: { metadata: Record<string, unknown> } }) => ({
+      id: "sig-target",
+      communityId: "demo-community",
+      type: SignalType.KOL_POST,
+      severity: 80,
+      metadata: create.metadata
+    }));
+    const app = createApp({
+      community: { findUnique: vi.fn().mockResolvedValue({ id: "demo-community" }) },
+      signal: { upsert: upsertSignal },
+      mission: { findFirst: vi.fn().mockResolvedValue(null), create: createMission },
+      shortLink: { create: vi.fn().mockResolvedValue({ id: "link-t", code: "target01" }) }
+    } as never);
+
+    const res = await request(app).post("/signals/ingest").send({
+      communityId: "demo-community",
+      type: "KOL_POST",
+      severity: 80,
+      sourceRef: "https://x.com/kol/status/99",
+      metadata: { ticker: "PEPE" }
+    });
+    expect(res.status).toBe(200);
+    expect(upsertSignal.mock.calls[0][0].create.metadata.targetUrl).toBe("https://x.com/kol/status/99");
+    const dealt = createMission.mock.calls[0][0].data.tasks.create as { details: string }[];
+    expect(dealt[0].details).toContain("target:https://x.com/kol/status/99");
+    expect(dealt[1].details).toContain("target:https://x.com/kol/status/99");
+  });
+
   it("rejects ticker-only ingest so signals cannot land on a spoofed name", async () => {
     const res = await request(createApp({} as never)).post("/signals/ingest").send({
       q: "PEPE",
@@ -684,6 +719,7 @@ describe("contributor profile", () => {
     expect(res.body.warRoom.clickCount).toBe(4);
     expect(res.body.warRoom.checkInCount).toBe(0);
     expect(res.body.nextPlay).toBeNull();
+    expect(res.body.raidTarget).toBeNull();
   });
 
   it("returns a personal next play on mission details when a wallet is present", async () => {

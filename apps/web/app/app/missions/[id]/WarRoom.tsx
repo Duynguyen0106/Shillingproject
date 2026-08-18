@@ -107,7 +107,7 @@ export default function WarRoom({
       <div className="kicker">Mission war room</div>
       <h3>Coordinate the raid</h3>
       <p className="muted">
-        No chat. Pin one line, tap I&apos;m in, then post on X/Telegram. This room closes when the mission expires.
+        No chat. Pin what to say. The post to reply to is linked on each play when a target URL was ingested — this app does not scrape X.
       </p>
       <div className="row">
         <span className="badge">{room.checkInCount} in</span>

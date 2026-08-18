@@ -10,6 +10,8 @@ import { evaluateLeadSeat, sameWallet, type LeadMember, type LeadSeat } from "./
 import { parseXCommunityUrl, proofMatchesXCommunity, xCommunityIdFromTask } from "./xcommunity";
 import {
   dealPlays,
+  extractSignalTarget,
+  httpUrl,
   nextUnsubmittedTask,
   serializeNextPlay,
   utcPulseKey,
@@ -449,7 +451,10 @@ async function createMissionFromSignal(
   const tasks = tasksFromDeal({
     signalType: signal.type,
     xCommunityId: community?.xCommunityId,
-    dexUrl: community?.dexUrl
+    dexUrl: community?.dexUrl,
+    targetUrl: extractSignalTarget(meta),
+    telegramUrl: httpUrl(meta.telegramUrl),
+    discordUrl: httpUrl(meta.discordUrl)
   });
   const mission = await prisma.mission.create({
     data: {
@@ -1024,12 +1029,14 @@ export function createApp(prisma: PrismaClient) {
     if (!communityId) {
       return res.status(400).json({ error: "Provide communityId or a DexScreener contract" });
     }
-    const mergedMetadata = {
+    const mergedMetadata: Record<string, unknown> = {
       ...(metadata ?? {}),
       ...(bound?.ticker ? { ticker: bound.ticker } : {}),
       ...(bound?.chainId ? { chainId: bound.chainId } : {}),
       ...(bound?.contractAddress ? { contractAddress: bound.contractAddress } : {})
     };
+    const targetUrl = extractSignalTarget(mergedMetadata, sourceRef);
+    if (targetUrl) mergedMetadata.targetUrl = targetUrl;
     const dedupeKey = `${communityId}:${type}:${sourceRef ?? ""}`;
     const safeMetadata = mergedMetadata as Prisma.InputJsonValue;
     const signal = await prisma.signal.upsert({
@@ -1188,6 +1195,7 @@ export function createApp(prisma: PrismaClient) {
       shortLinks: serializeShortLinks((mission.shortLinks ?? []).filter((link) => !link.userId)),
       warRoom: serializeWarRoom(mission),
       nextPlay: nextPlayFromMission(mission, actorWallet),
+      raidTarget: extractSignalTarget(signalMeta(mission.signal?.metadata), mission.signal?.sourceRef),
       ...withExpiryFields(mission)
     });
   }));
