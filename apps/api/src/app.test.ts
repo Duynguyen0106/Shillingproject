@@ -1251,3 +1251,73 @@ describe("X Community bind and bonus proof", () => {
     expect(createSubmission).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("raid feed", () => {
+  it("lists watched KOLs and clickable posts", async () => {
+    const app = createApp({
+      community: { findUnique: vi.fn().mockResolvedValue({ id: "demo-community", ticker: "PEPE", contractAddress: "0xpepe" }) },
+      feedPost: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: "p1",
+            kind: "MENTION",
+            url: "https://x.com/random/status/2",
+            authorHandle: "random",
+            text: "$PEPE CA dropped",
+            postedAt: new Date().toISOString()
+          }
+        ])
+      },
+      kolWatch: { findMany: vi.fn().mockResolvedValue([{ id: "k1", handle: "examplekol" }]) }
+    } as never);
+
+    const res = await request(app).get("/communities/demo-community/feed");
+    expect(res.status).toBe(200);
+    expect(res.body.posts[0].url).toBe("https://x.com/random/status/2");
+    expect(res.body.kols[0].handle).toBe("examplekol");
+  });
+
+  it("lets the lead watch a KOL handle", async () => {
+    const upsert = vi.fn().mockResolvedValue({ id: "k1", handle: "kol" });
+    const app = createApp({
+      community: { findUnique: vi.fn().mockResolvedValue({ id: "demo-community" }) },
+      communityMember: {
+        findFirst: vi.fn().mockResolvedValue({
+          role: "lead",
+          lastActiveAt: new Date(),
+          user: { wallet: "0xlead", displayName: "Lead" }
+        }),
+        updateMany: vi.fn()
+      },
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "user-1", wallet: "0xlead" }) },
+      kolWatch: { upsert }
+    } as never);
+
+    const denied = await request(app).post("/communities/demo-community/kols").send({
+      wallet: "0xmember",
+      handle: "@kol"
+    });
+    expect(denied.status).toBe(403);
+
+    const ok = await request(app).post("/communities/demo-community/kols").send({
+      wallet: "0xlead",
+      handle: "@KOL"
+    });
+    expect(ok.status).toBe(200);
+    expect(upsert.mock.calls[0][0].create.handle).toBe("kol");
+  });
+
+  it("refuses live refresh when no X provider key is configured", async () => {
+    const app = createApp({
+      community: { findUnique: vi.fn().mockResolvedValue({ id: "demo-community", ticker: "PEPE", kolWatches: [] }) },
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "user-1", wallet: "0xraid" }) },
+      communityMember: {
+        findUnique: vi.fn().mockResolvedValue({ id: "m1", userId: "user-1", communityId: "demo-community" }),
+        updateMany: vi.fn()
+      }
+    } as never);
+    const res = await request(app).post("/communities/demo-community/feed/refresh").send({ wallet: "0xraid" });
+    expect(res.status).toBe(200);
+    expect(res.body.provider).toBe("none");
+  });
+});

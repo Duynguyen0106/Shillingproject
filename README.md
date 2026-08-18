@@ -26,6 +26,7 @@
 3. Configure environment:
    - `cp apps/api/.env.example apps/api/.env`
    - `cp apps/web/.env.example apps/web/.env.local`
+   - set `TWITTERAPI_IO_KEY` or `X_BEARER_TOKEN` on the API to pull live KOL posts and ticker/CA mentions
    - set `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` from https://dashboard.reown.com
      (needed for Trust/Phantom mobile QR and the full wallet catalog)
 4. Generate Prisma client + migrate + seed:
@@ -45,10 +46,9 @@ From the UI:
 
 1. Paste a DexScreener URL or token contract on `/` (demo PEPE: `0x6982508145454ce325ddbe47a25d4ec3d2311933`).
 2. Open the contract hub and join the community bound to that mint.
-3. Connect a wallet. The mission board shows a daily pulse if nothing else is live; ingest a mock signal to overlay a KOL/mention/whale raid.
-4. Open the mission from `/app`, claim it, and share your personal tracked CTA (X / Telegram / Discord copy is on the mission). Your next play is highlighted per wallet. HIGH missions expire in 2 hours.
-5. Unique clicks on that CTA award points. Confirm points and clicks on `/app/me` and `/app/leaderboard`.
-6. Create extra tracked CTAs at `/app/admin/attribution` and click `/r/:code`.
+3. Open `/app/feed`. The CTO lead watches KOL handles. With an X API key the feed pulls live posts and ticker/CA mentions. Click **Shill this** to open that post on X.
+4. Mentions notify Telegram/Discord so the whole room piles on that URL. Claimed raids still score on the mission board.
+5. Unique clicks on your personal CTA award points. Confirm on `/app/me` and `/app/leaderboard`.
 
 From the API:
 

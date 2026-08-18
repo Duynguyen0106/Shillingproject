@@ -25,7 +25,9 @@ export default async function MissionBoardPage() {
     <main className="container">
       <div className="kicker">Top actions now</div>
       <h1>Mission Board</h1>
-      <p className="muted">Highest urgency first. HIGH missions expire in 2 hours, MEDIUM in 6, LOW in 24. An empty board gets a daily pulse automatically — live KOL/mention/whale raids overlay on top of those standing plays.</p>
+      <p className="muted">
+        Use the <Link href="/app/feed">raid feed</Link> to click KOL posts and mentions. This board is the scored raid that opens from those posts.
+      </p>
       {sorted.length === 0 && (
         <div className="card">
           <p>No community bound yet, so a daily pulse could not be created. Bind a mint first, then ingest a signal to overlay a raid.</p>

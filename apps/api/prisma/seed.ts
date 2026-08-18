@@ -108,6 +108,40 @@ async function main() {
       }
     });
   }
+
+  await prisma.kolWatch.upsert({
+    where: { communityId_handle: { communityId: community.id, handle: "examplekol" } },
+    update: {},
+    create: { communityId: community.id, handle: "examplekol", displayName: "Example KOL" }
+  });
+
+  await prisma.feedPost.upsert({
+    where: { communityId_url: { communityId: community.id, url: "https://x.com/examplekol/status/1" } },
+    update: { text: "$PEPE looking heavy. Quote this." },
+    create: {
+      communityId: community.id,
+      kind: "KOL_POST",
+      url: "https://x.com/examplekol/status/1",
+      authorHandle: "examplekol",
+      authorName: "Example KOL",
+      text: "$PEPE looking heavy. Quote this.",
+      postedAt: new Date()
+    }
+  });
+
+  await prisma.feedPost.upsert({
+    where: { communityId_url: { communityId: community.id, url: "https://x.com/random/status/2" } },
+    update: { text: `CA ${community.contractAddress}` },
+    create: {
+      communityId: community.id,
+      kind: "MENTION",
+      url: "https://x.com/random/status/2",
+      authorHandle: "random",
+      text: `Someone dropped the ${community.ticker} CA ${community.contractAddress}`,
+      postedAt: new Date(),
+      missionId: mission.id
+    }
+  });
 }
 
 main()

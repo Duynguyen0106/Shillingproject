@@ -420,8 +420,8 @@ export default function TokenHub({ chain, address }: { chain: string; address: s
             </div>
           )}
           <div className="row">
-            <Link className="btn" href="/app">Open mission board</Link>
-            <Link className="btn secondary" href="/app/me">My Ops</Link>
+            <Link className="btn" href="/app/feed">Open raid feed</Link>
+            <Link className="btn secondary" href="/app">Missions</Link>
             <Link className="btn secondary" href="/app/admin/signals">Ingest signal</Link>
           </div>
         </div>

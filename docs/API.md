@@ -14,6 +14,14 @@
 - POST `/communities/:id/lead/resign` — current lead steps down; community stays on the mint
 - POST `/communities/:id/x-community` `{ url, wallet? }` — active CTO lead binds an `x.com/i/communities/{id}` URL to this mint (unique). Shown on the token hub. Does not replace DexScreener contract identity.
 
+## Raid feed
+- GET `/communities/:id/feed` — watched KOL handles plus latest KOL posts and ticker/CA mentions. `provider` is `twitterapi.io`, `x`, or `none`.
+- POST `/communities/:id/kols` `{ handle, wallet? }` — CTO lead watches an X handle
+- DELETE `/communities/:id/kols/:handle` — CTO lead removes a watch
+- POST `/communities/:id/feed/refresh` — joined member pulls live posts (requires `TWITTERAPI_IO_KEY` or `X_BEARER_TOKEN`). Mentions of the ticker or CA notify Telegram/Discord and open a raid.
+- POST `/communities/:id/feed/posts` `{ url, text, authorHandle?, kind? }` — push a post into the feed (worker/admin)
+- POST `/communities/:id/feed/:postId/shill` `{ wallet? }` — claim the raid for that post and return the X URL to reply on
+
 ## Signals / Missions
 - POST `/signals/ingest` `{ communityId? , chainId?, contractAddress?, q?, type, severity, sourceRef?, metadata? }` — if a mint is provided, the signal is routed to the community uniquely bound to that contract; ticker search is rejected; 404 if the mint is unbound. The mission is dealt from the playbook: standing plays always, plus a quote overlay for KOL/mention/whale/volume signals (max 5 tasks). Pass the post to raid as `metadata.targetUrl` (or a URL `sourceRef`); the app does not scrape X to find it.
 - GET `/communities/:id/signals`

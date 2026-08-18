@@ -39,6 +39,11 @@ enum Priority {
   HIGH
 }
 
+enum FeedPostKind {
+  KOL_POST
+  MENTION
+}
+
 model User {
   id           String      @id @default(cuid())
   wallet       String      @unique
@@ -73,8 +78,45 @@ model Community {
   scoreEntries     Score[]
   leaderboardSnaps LeaderboardSnapshot[]
   shortLinks       ShortLink[]
+  kolWatches       KolWatch[]
+  feedPosts        FeedPost[]
 
   @@unique([chainId, contractAddress])
+}
+
+model KolWatch {
+  id            String    @id @default(cuid())
+  communityId   String
+  handle        String
+  displayName   String?
+  xUserId       String?
+  createdAt     DateTime  @default(now())
+  lastFetchedAt DateTime?
+  community     Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  posts         FeedPost[]
+
+  @@unique([communityId, handle])
+}
+
+model FeedPost {
+  id            String       @id @default(cuid())
+  communityId   String
+  kolWatchId    String?
+  kind          FeedPostKind
+  url           String
+  authorHandle  String
+  authorName    String?
+  text          String
+  postedAt      DateTime
+  notifiedAt    DateTime?
+  missionId     String?
+  createdAt     DateTime     @default(now())
+  community     Community    @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  kolWatch      KolWatch?    @relation(fields: [kolWatchId], references: [id], onDelete: SetNull)
+  mission       Mission?     @relation(fields: [missionId], references: [id], onDelete: SetNull)
+
+  @@unique([communityId, url])
+  @@index([communityId, postedAt])
 }
 
 model CommunityMember {
@@ -125,6 +167,7 @@ model Mission {
   shortLinks    ShortLink[]
   claims        MissionClaim[]
   checkIns      MissionCheckIn[]
+  feedPosts     FeedPost[]
 }
 
 model MissionCheckIn {

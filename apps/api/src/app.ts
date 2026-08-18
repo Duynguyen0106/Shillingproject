@@ -2,7 +2,7 @@ import { createHash } from "crypto";
 import express, { NextFunction, Request, Response } from "express";
 import cors from "cors";
 import { nanoid } from "nanoid";
-import { Prisma, PrismaClient, ActionType, MissionStatus, Priority, SignalType } from "@prisma/client";
+import { Prisma, PrismaClient, ActionType, FeedPostKind, MissionStatus, Priority, SignalType } from "@prisma/client";
 import { computeScore, scoreAttributedClick } from "@shillops/scoring-engine";
 import { getAddress, isAddress, verifyMessage } from "viem";
 import type { Address, Hex } from "viem";
@@ -27,6 +27,8 @@ import {
   tokenTrustSignals,
   type CanonicalToken
 } from "./dexscreener";
+import { ingestNormalizedPost, parseWatchHandle, refreshAllCommunityFeeds, refreshCommunityFeed } from "./feed";
+import { configuredFeedProvider, mentionMatches, parseXHandle, parseXStatusUrl } from "./xfeed";
 
 const appUrl = process.env.APP_URL || "http://localhost:3000";
 const sessions = new Map<string, { wallet: string }>();
@@ -104,6 +106,20 @@ const pinSchema = z.object({
 const xCommunitySchema = z.object({
   wallet: z.string().min(3).optional(),
   url: z.string().min(8)
+});
+
+const kolWatchSchema = z.object({
+  wallet: z.string().min(3).optional(),
+  handle: z.string().min(1)
+});
+
+const feedPostSchema = z.object({
+  wallet: z.string().min(3).optional(),
+  url: z.string().url(),
+  authorHandle: z.string().optional(),
+  text: z.string().min(1).max(2000),
+  postedAt: z.string().optional(),
+  kind: z.nativeEnum(FeedPostKind).optional()
 });
 
 const tokenLookupSchema = z.object({
@@ -471,6 +487,88 @@ async function createMissionFromSignal(
   const shortLink = await createTrackedLink(prisma, signal.communityId, mission.id);
   await notifyMissionCreated(mission.id, mission.title, signal.type, mission.priority, signal.metadata as Prisma.JsonValue | undefined);
   return { ...mission, shortLinks: [...(mission.shortLinks ?? []), shortLink] };
+}
+
+async function recordSignalOnFeed(
+  prisma: PrismaClient,
+  community: { id: string; ticker: string; contractAddress: string | null },
+  signal: { type: SignalType; metadata: Prisma.JsonValue | null; sourceRef?: string | null },
+  missionId?: string
+) {
+  const meta = signalMeta(signal.metadata);
+  const targetUrl = extractSignalTarget(meta, signal.sourceRef);
+  if (!targetUrl) return null;
+  const parsed = parseXStatusUrl(targetUrl);
+  const handle = parseXHandle(String(meta.authorHandle ?? parsed?.handle ?? "unknown")) ?? "unknown";
+  const kind = signal.type === SignalType.MENTION_SPIKE ? FeedPostKind.MENTION : FeedPostKind.KOL_POST;
+  const result = await prisma.feedPost?.upsert?.({
+    where: { communityId_url: { communityId: community.id, url: parsed?.url ?? targetUrl } },
+    update: { missionId: missionId ?? undefined },
+    create: {
+      communityId: community.id,
+      kind,
+      url: parsed?.url ?? targetUrl,
+      authorHandle: handle,
+      authorName: typeof meta.authorName === "string" ? meta.authorName : undefined,
+      text: typeof meta.text === "string" ? meta.text.slice(0, 2000) : `${community.ticker} ${signal.type.replaceAll("_", " ")}`,
+      postedAt: new Date(),
+      missionId
+    }
+  });
+  return result ?? null;
+}
+
+async function spawnRaidFromFeedPost(
+  prisma: PrismaClient,
+  community: { id: string; ticker: string; chainId: string | null; contractAddress: string | null },
+  post: { url: string; authorHandle: string; text: string; kind?: string },
+  type: SignalType
+) {
+  const dedupeKey = `${community.id}:${type}:${post.url}`;
+  const metadata = {
+    ticker: community.ticker,
+    chainId: community.chainId,
+    contractAddress: community.contractAddress,
+    targetUrl: post.url,
+    authorHandle: post.authorHandle,
+    text: post.text
+  };
+  const signal = await prisma.signal.upsert({
+    where: { dedupeKey },
+    update: { severity: type === SignalType.MENTION_SPIKE ? 90 : 70, metadata },
+    create: {
+      communityId: community.id,
+      type,
+      severity: type === SignalType.MENTION_SPIKE ? 90 : 70,
+      sourceRef: post.url,
+      dedupeKey,
+      metadata
+    }
+  });
+  let mission = await prisma.mission.findFirst({
+    where: { signalId: signal.id },
+    include: { tasks: true, shortLinks: true }
+  });
+  if (!mission) mission = await createMissionFromSignal(prisma, signal);
+  return mission;
+}
+
+export async function tickFeeds(prisma: PrismaClient) {
+  return refreshAllCommunityFeeds(prisma, {
+    onNewMention: async ({ communityId, ticker, chainId, contractAddress, post }) => {
+      const mission = await spawnRaidFromFeedPost(
+        prisma,
+        { id: communityId, ticker, chainId, contractAddress },
+        post,
+        SignalType.MENTION_SPIKE
+      );
+      await dispatchAlert(
+        `📣 ${ticker} mentioned by @${post.authorHandle}\n${post.text.slice(0, 140)}\nShill this post: ${post.url}\nFeed: ${appUrl}/app/feed`
+      );
+      await prisma.feedPost.update({ where: { id: post.id }, data: { notifiedAt: new Date(), missionId: mission.id } });
+      return mission.id;
+    }
+  });
 }
 
 const pulseMissionInclude = {
@@ -1002,6 +1100,171 @@ export function createApp(prisma: PrismaClient) {
     res.json({ community: updated, xCommunity: parsed });
   }));
 
+  app.get("/communities/:id/feed", asyncRoute(async (req, res) => {
+    const community = await prisma.community.findUnique({ where: { id: req.params.id } });
+    if (!community) return res.status(404).json({ error: "Community not found" });
+    const [posts, kols] = await Promise.all([
+      prisma.feedPost?.findMany?.({
+        where: { communityId: community.id },
+        orderBy: { postedAt: "desc" },
+        take: 50,
+        include: { mission: { select: { id: true, status: true, title: true } } }
+      }) ?? [],
+      prisma.kolWatch?.findMany?.({
+        where: { communityId: community.id },
+        orderBy: { createdAt: "asc" }
+      }) ?? []
+    ]);
+    res.json({
+      provider: configuredFeedProvider(),
+      ticker: community.ticker,
+      contractAddress: community.contractAddress,
+      kols,
+      posts
+    });
+  }));
+
+  app.post("/communities/:id/kols", asyncRoute(async (req, res) => {
+    const { wallet: bodyWallet, handle: rawHandle } = kolWatchSchema.parse(req.body ?? {});
+    const wallet = resolveActorWallet(req, bodyWallet);
+    if (!wallet) return res.status(401).json({ error: "Connect a wallet and sign in first" });
+    const community = await prisma.community.findUnique({ where: { id: req.params.id } });
+    if (!community) return res.status(404).json({ error: "Community not found" });
+    const seat = await loadLeadSeat(prisma, community.id);
+    if (seat.vacant || !sameWallet(seat.wallet, wallet)) {
+      return res.status(403).json({ error: "Only the active CTO lead can add KOL watches" });
+    }
+    const handle = parseWatchHandle(rawHandle);
+    if (!handle) return res.status(400).json({ error: "Use an X handle like @username" });
+    const watch = await prisma.kolWatch.upsert({
+      where: { communityId_handle: { communityId: community.id, handle } },
+      update: {},
+      create: { communityId: community.id, handle }
+    });
+    const user = await prisma.user.findUnique({ where: { wallet } });
+    if (user) await touchMemberActivity(prisma, user.id, community.id);
+    res.json({ watch, provider: configuredFeedProvider() });
+  }));
+
+  app.delete("/communities/:id/kols/:handle", asyncRoute(async (req, res) => {
+    const wallet = resolveActorWallet(req);
+    if (!wallet) return res.status(401).json({ error: "Connect a wallet and sign in first" });
+    const seat = await loadLeadSeat(prisma, req.params.id);
+    if (seat.vacant || !sameWallet(seat.wallet, wallet)) {
+      return res.status(403).json({ error: "Only the active CTO lead can remove KOL watches" });
+    }
+    const handle = parseWatchHandle(req.params.handle);
+    if (!handle) return res.status(400).json({ error: "Invalid handle" });
+    await prisma.kolWatch.deleteMany({ where: { communityId: req.params.id, handle } });
+    res.json({ removed: handle });
+  }));
+
+  app.post("/communities/:id/feed/refresh", asyncRoute(async (req, res) => {
+    const wallet = resolveActorWallet(req, typeof req.body?.wallet === "string" ? req.body.wallet : undefined);
+    if (!wallet) return res.status(401).json({ error: "Connect a wallet and sign in first" });
+    const community = await prisma.community.findUnique({ where: { id: req.params.id } });
+    if (!community) return res.status(404).json({ error: "Community not found" });
+    const user = await prisma.user.findUnique({ where: { wallet } });
+    const member = user
+      ? await prisma.communityMember.findUnique({
+        where: { userId_communityId: { userId: user.id, communityId: community.id } }
+      })
+      : null;
+    if (!member) return res.status(403).json({ error: "Join this mint before refreshing the raid feed" });
+    await touchMemberActivity(prisma, user!.id, community.id);
+    const result = await refreshCommunityFeed(prisma, community.id, {
+      onNewMention: async ({ ticker, chainId, contractAddress, post }) => {
+        const mission = await spawnRaidFromFeedPost(
+          prisma,
+          { id: community.id, ticker, chainId, contractAddress },
+          post,
+          SignalType.MENTION_SPIKE
+        );
+        await dispatchAlert(
+          `📣 ${ticker} mentioned by @${post.authorHandle}\n${post.text.slice(0, 140)}\nShill this post: ${post.url}\nFeed: ${appUrl}/app/feed`
+        );
+        return mission.id;
+      }
+    });
+    res.json(result);
+  }));
+
+  app.post("/communities/:id/feed/posts", asyncRoute(async (req, res) => {
+    const body = feedPostSchema.parse(req.body ?? {});
+    const community = await prisma.community.findUnique({ where: { id: req.params.id } });
+    if (!community) return res.status(404).json({ error: "Community not found" });
+    const parsed = parseXStatusUrl(body.url);
+    if (!parsed) return res.status(400).json({ error: "Use an X status URL like https://x.com/user/status/123" });
+    const handle = parseXHandle(body.authorHandle || parsed.handle || "") ?? parsed.handle ?? "unknown";
+    const mention = mentionMatches(body.text, community.ticker, community.contractAddress);
+    const result = await ingestNormalizedPost(
+      prisma,
+      community,
+      {
+        id: parsed.id,
+        url: parsed.url,
+        authorHandle: handle,
+        text: body.text,
+        postedAt: body.postedAt ? new Date(body.postedAt) : new Date()
+      },
+      body.kind ?? (mention ? FeedPostKind.MENTION : FeedPostKind.KOL_POST)
+    );
+    if (result.created && result.post.kind === FeedPostKind.MENTION) {
+      const mission = await spawnRaidFromFeedPost(prisma, community, result.post, SignalType.MENTION_SPIKE);
+      await dispatchAlert(
+        `📣 ${community.ticker} mentioned by @${result.post.authorHandle}\n${result.post.text.slice(0, 140)}\nShill this post: ${result.post.url}\nFeed: ${appUrl}/app/feed`
+      );
+      await prisma.feedPost.update({
+        where: { id: result.post.id },
+        data: { missionId: mission.id, notifiedAt: new Date() }
+      });
+      return res.json({ post: { ...result.post, missionId: mission.id }, created: true, mission });
+    }
+    res.json({ post: result.post, created: result.created });
+  }));
+
+  app.post("/communities/:id/feed/:postId/shill", asyncRoute(async (req, res) => {
+    const { wallet: bodyWallet } = claimSchema.parse(req.body ?? {});
+    const wallet = resolveActorWallet(req, bodyWallet);
+    if (!wallet) return res.status(401).json({ error: "Connect a wallet and sign in first" });
+    const post = await prisma.feedPost.findUnique({ where: { id: req.params.postId } });
+    if (!post || post.communityId !== req.params.id) return res.status(404).json({ error: "Post not found" });
+    const community = await prisma.community.findUnique({ where: { id: req.params.id } });
+    if (!community) return res.status(404).json({ error: "Community not found" });
+    let user = await prisma.user.findUnique({ where: { wallet } });
+    if (!user) user = await prisma.user.create({ data: { wallet } });
+    const member = await prisma.communityMember.findUnique({
+      where: { userId_communityId: { userId: user.id, communityId: community.id } }
+    });
+    if (!member) return res.status(403).json({ error: "Join this mint before shilling" });
+    let missionId = post.missionId;
+    if (!missionId) {
+      const mission = await spawnRaidFromFeedPost(
+        prisma,
+        community,
+        post,
+        post.kind === FeedPostKind.MENTION ? SignalType.MENTION_SPIKE : SignalType.KOL_POST
+      );
+      missionId = mission.id;
+      await prisma.feedPost.update({ where: { id: post.id }, data: { missionId } });
+    }
+    const mission = await prisma.mission.findUnique({ where: { id: missionId } });
+    if (!mission) return res.status(404).json({ error: "Mission not found" });
+    await prisma.missionClaim.upsert({
+      where: { missionId_userId: { missionId: mission.id, userId: user.id } },
+      update: {},
+      create: { missionId: mission.id, userId: user.id }
+    });
+    const shortLink = await ensureContributorLink(prisma, mission, user.id);
+    await prisma.missionCheckIn?.upsert?.({
+      where: { missionId_userId: { missionId: mission.id, userId: user.id } },
+      update: {},
+      create: { missionId: mission.id, userId: user.id }
+    });
+    await touchMemberActivity(prisma, user.id, community.id);
+    res.json({ url: post.url, missionId: mission.id, claimed: true, shortLink });
+  }));
+
   app.post("/signals/ingest", asyncRoute(async (req, res) => {
     const body = ingestSignalSchema.parse(req.body);
     const { type, severity, sourceRef, metadata } = body;
@@ -1051,6 +1314,10 @@ export function createApp(prisma: PrismaClient) {
     });
     if (!mission) {
       mission = await createMissionFromSignal(prisma, signal);
+    }
+    const feedCommunity = bound ?? await prisma.community?.findUnique?.({ where: { id: communityId } });
+    if (feedCommunity) {
+      await recordSignalOnFeed(prisma, feedCommunity, signal, mission.id);
     }
     const actorWallet = resolveActorWallet(req);
     if (actorWallet) {
