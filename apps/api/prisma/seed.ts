@@ -61,12 +61,14 @@ async function main() {
         create: [
           {
             title: "Reply to target thread",
+            details: "play:reply-narrative",
             actionType: ActionType.REPLY,
             platform: Platform.X,
             basePoints: 10
           },
           {
-            title: "Share update in Telegram groups",
+            title: "Share in Telegram",
+            details: "play:share-telegram",
             actionType: ActionType.SHARE,
             platform: Platform.TELEGRAM,
             basePoints: 6

@@ -45,8 +45,8 @@ From the UI:
 
 1. Paste a DexScreener URL or token contract on `/` (demo PEPE: `0x6982508145454ce325ddbe47a25d4ec3d2311933`).
 2. Open the contract hub and join the community bound to that mint.
-3. Connect a wallet, ingest a mock signal, claim the mission, and share your personal CTA.
-4. Open the mission from `/app`, claim it, and share your personal tracked CTA (X / Telegram / Discord copy is on the mission). HIGH missions expire in 2 hours.
+3. Connect a wallet. The mission board shows a daily pulse if nothing else is live; ingest a mock signal to overlay a KOL/mention/whale raid.
+4. Open the mission from `/app`, claim it, and share your personal tracked CTA (X / Telegram / Discord copy is on the mission). Your next play is highlighted per wallet. HIGH missions expire in 2 hours.
 5. Unique clicks on that CTA award points. Confirm points and clicks on `/app/me` and `/app/leaderboard`.
 6. Create extra tracked CTAs at `/app/admin/attribution` and click `/r/:code`.
 

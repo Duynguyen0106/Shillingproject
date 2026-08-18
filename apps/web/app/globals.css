@@ -48,12 +48,8 @@ a.btn,
 .muted {
   color: #a1a1aa;
 }
-.card {
-  border: 1px solid #27272a;
-  border-radius: 12px;
-  padding: 16px;
-  margin-bottom: 12px;
-  background: #111114cc;
+.card.next-play {
+  border-color: #f97316;
 }
 .row {
   display: flex;

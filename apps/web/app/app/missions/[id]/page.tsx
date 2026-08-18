@@ -2,26 +2,9 @@ import { apiGet } from "../../../../lib/api";
 import ClaimButton from "./ClaimButton";
 import CompleteMissionButton from "./CompleteMissionButton";
 import ShareKit from "../../../ShareKit";
-import SubmissionForm from "./SubmissionForm";
+import PlayTasks, { type PlayTask } from "./PlayTasks";
 import WarRoom, { type WarRoomData } from "./WarRoom";
 import { formatRemaining } from "../../../../lib/missionTime";
-
-type Submission = {
-  id: string;
-  proofUrl: string;
-  pointsAwarded: number;
-  user?: { wallet: string; displayName?: string | null };
-};
-
-type Task = {
-  id: string;
-  title: string;
-  details?: string | null;
-  actionType: string;
-  platform: string;
-  basePoints: number;
-  submissions?: Submission[];
-};
 
 type ShortLink = {
   code: string;
@@ -41,7 +24,7 @@ type Mission = {
   priority: string;
   urgency: number;
   status: string;
-  tasks: Task[];
+  tasks: PlayTask[];
   signal?: { type: string; severity: number; metadata?: Record<string, unknown> | null } | null;
   shortLinks?: ShortLink[];
   claims?: Claim[];
@@ -60,11 +43,17 @@ export default async function MissionDetailsPage({ params }: { params: { id: str
     <main className="container">
       <h1>{mission.title}</h1>
       <p className="muted">{mission.description}</p>
+      <p className="muted">
+        {mission.signal
+          ? "Standing plays are always on this raid. Quote/KOL overlays appear because this mission was created from a live signal."
+          : "This daily pulse does not wait on X posts, KOL mentions, or volume. Ingest a signal to overlay a raid."}
+      </p>
       <div className="row">
         <span className={`badge ${mission.priority === "HIGH" ? "high" : ""}`}>Priority: {mission.priority}</span>
         <span>Urgency: {mission.urgency}</span>
         <span>Status: {mission.status}</span>
         {mission.signal && <span>Signal: {mission.signal.type}</span>}
+        {!mission.signal && <span>Daily pulse</span>}
         <span>Claims: {mission.claimsCount ?? mission.claims?.length ?? 0}</span>
         {typeof mission.remainingMs === "number" && <span>{formatRemaining(mission.remainingMs)}</span>}
       </div>
@@ -103,39 +92,15 @@ export default async function MissionDetailsPage({ params }: { params: { id: str
             communityCode={tracked?.code}
           />
           <CompleteMissionButton missionId={mission.id} status={mission.status} />
-          {mission.tasks.map((task) => (
-            <div key={task.id} className="card">
-              <h3>{task.title}</h3>
-              <p>{task.actionType} on {task.platform} · Base points {task.basePoints}</p>
-              {(task.submissions?.length ?? 0) > 0 && (
-                <div>
-                  <p className="muted">Recent proofs</p>
-                  {task.submissions?.map((submission) => (
-                    <p key={submission.id}>
-                      {submission.user?.displayName || submission.user?.wallet || "Contributor"} · {submission.pointsAwarded} pts ·{" "}
-                      <a href={submission.proofUrl} target="_blank" rel="noreferrer">proof</a>
-                    </p>
-                  ))}
-                </div>
-              )}
-              <SubmissionForm taskId={task.id} missionId={mission.id} taskDetails={task.details} />
-            </div>
-          ))}
+          <PlayTasks missionId={mission.id} tasks={mission.tasks} closed={false} />
         </>
       ) : (
         <div className="card">
           <p>This mission is {mission.status.toLowerCase()}. Claims, shares, and new proofs are closed.</p>
-          {mission.tasks.map((task) => (
-            <div key={task.id}>
-              <h3>{task.title}</h3>
-              {(task.submissions?.length ?? 0) > 0 && task.submissions?.map((submission) => (
-                <p key={submission.id}>
-                  {submission.user?.displayName || submission.user?.wallet || "Contributor"} · {submission.pointsAwarded} pts
-                </p>
-              ))}
-            </div>
-          ))}
         </div>
+      )}
+      {mission.status !== "ACTIVE" && (
+        <PlayTasks missionId={mission.id} tasks={mission.tasks} closed />
       )}
     </main>
   );

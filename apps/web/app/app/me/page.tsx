@@ -32,6 +32,14 @@ export default function MyOpsPage() {
         {profile?.displayName ? ` · ${profile.displayName}` : ""}
       </p>
       {loading && !profile && <p className="muted">Loading your ops...</p>}
+      {profile?.nextPlay && (
+        <div className="card next-play">
+          <div className="kicker">Your next play</div>
+          <h2>{profile.nextPlay.taskTitle}</h2>
+          <p className="muted">{profile.nextPlay.missionTitle}</p>
+          <Link href={`/app/missions/${profile.nextPlay.missionId}`}>Open this play</Link>
+        </div>
+      )}
       <div className="stats">
         <div className="stat">
           <span className="muted">Points</span>

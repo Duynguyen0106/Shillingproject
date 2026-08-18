@@ -4,6 +4,7 @@ import { useState } from "react";
 import ConnectWalletButton from "../../../ConnectWalletButton";
 import { API_BASE } from "../../../../lib/config";
 import { authHeaders, notifyOps } from "../../../../lib/session";
+import { proofPlaceholder } from "../../../../lib/playbook";
 import { useContributorProfile } from "../../../../lib/useContributorProfile";
 
 export default function SubmissionForm({
@@ -17,9 +18,7 @@ export default function SubmissionForm({
 }) {
   const { wallet, label, connected, profile } = useContributorProfile();
   const xCommunityId = taskDetails?.startsWith("x-community:") ? taskDetails.slice("x-community:".length) : null;
-  const [proofUrl, setProofUrl] = useState(
-    xCommunityId ? `https://x.com/i/communities/${xCommunityId}` : "https://x.com/example/status/1"
-  );
+  const [proofUrl, setProofUrl] = useState(proofPlaceholder(taskDetails));
   const [proofText, setProofText] = useState("");
   const [status, setStatus] = useState("");
   const [points, setPoints] = useState<number | null>(null);

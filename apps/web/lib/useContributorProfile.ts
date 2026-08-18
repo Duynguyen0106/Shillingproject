@@ -34,6 +34,14 @@ export type ContributorLink = {
   clicks: number;
 };
 
+export type ContributorNextPlay = {
+  missionId: string;
+  missionTitle: string;
+  taskId: string;
+  taskTitle: string;
+  playId?: string | null;
+};
+
 export type ContributorProfile = {
   id: string;
   wallet: string;
@@ -43,6 +51,7 @@ export type ContributorProfile = {
   rank: number | null;
   clicks?: number;
   claimedMissionIds: string[];
+  nextPlay?: ContributorNextPlay | null;
   claims: ContributorClaim[];
   submissions: ContributorSubmission[];
   links?: ContributorLink[];

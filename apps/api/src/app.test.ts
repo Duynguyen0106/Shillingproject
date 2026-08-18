@@ -154,6 +154,58 @@ describe("signal to mission flow", () => {
       contractAddress: "0x6982508145454ce325ddbe47a25d4ec3d2311933"
     });
     expect(createMission.mock.calls[0][0].data.title).toBe("PEPE · VOLUME SPIKE response");
+    const dealt = createMission.mock.calls[0][0].data.tasks.create as { title: string; details: string }[];
+    expect(dealt.map((task) => task.details)).toEqual([
+      "play:reply-narrative",
+      "play:quote-signal",
+      "play:share-telegram",
+      "play:invite-raider"
+    ]);
+  });
+
+  it("deals standing plays plus a quote overlay and an X Community bonus", async () => {
+    const createMission = vi.fn().mockResolvedValue({
+      id: "mission-kol",
+      title: "KOL POST response",
+      priority: Priority.HIGH,
+      shortLinks: []
+    });
+    const app = createApp({
+      community: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "demo-community",
+          xCommunityId: "123456789",
+          dexUrl: "https://dexscreener.com/ethereum/0xpair"
+        })
+      },
+      signal: {
+        upsert: vi.fn().mockResolvedValue({
+          id: "sig-kol",
+          communityId: "demo-community",
+          type: SignalType.KOL_POST,
+          severity: 88,
+          metadata: { ticker: "PEPE" }
+        })
+      },
+      mission: { findFirst: vi.fn().mockResolvedValue(null), create: createMission },
+      shortLink: { create: vi.fn().mockResolvedValue({ id: "link-kol", code: "kolcta12" }) }
+    } as never);
+
+    const res = await request(app).post("/signals/ingest").send({
+      communityId: "demo-community",
+      type: "KOL_POST",
+      severity: 88,
+      sourceRef: "kol-1"
+    });
+    expect(res.status).toBe(200);
+    const dealt = createMission.mock.calls[0][0].data.tasks.create as { details: string }[];
+    expect(dealt.map((task) => task.details)).toEqual([
+      "play:reply-narrative",
+      "play:quote-signal",
+      "play:share-telegram",
+      "x-community:123456789",
+      "play:invite-raider"
+    ]);
   });
 
   it("rejects ticker-only ingest so signals cannot land on a spoofed name", async () => {
@@ -238,6 +290,16 @@ describe("scoring and alerts", () => {
     });
     expect(spike).toContain("Mention spike: PEPE up 42%");
     expect(spike).toContain("/c/ethereum/0xpepe");
+
+    const pulse = buildMissionAlertMessage({
+      missionId: "m3",
+      title: "PEPE · Daily pulse",
+      signalType: "DAILY_PULSE",
+      priority: Priority.LOW,
+      metadata: { ticker: "PEPE" }
+    });
+    expect(pulse).toContain("Daily pulse for PEPE");
+    expect(pulse).toContain("No spike required");
   });
 
   it("builds social share copy with the CTA", () => {
@@ -538,7 +600,17 @@ describe("contributor profile", () => {
           {
             missionId: "m1",
             claimedAt: "2026-08-18T00:00:00.000Z",
-            mission: { id: "m1", title: "Spike", status: "ACTIVE", priority: "HIGH", urgency: 80 }
+            mission: {
+              id: "m1",
+              title: "Spike",
+              status: "ACTIVE",
+              priority: "HIGH",
+              urgency: 80,
+              tasks: [
+                { id: "t1", title: "Reply", details: "play:reply-narrative", actionType: "REPLY", platform: "X" },
+                { id: "t2", title: "Share in Telegram", details: "play:share-telegram", actionType: "SHARE", platform: "TELEGRAM" }
+              ]
+            }
           }
         ])
       },
@@ -583,6 +655,11 @@ describe("contributor profile", () => {
     expect(res.body.submissions[0].pointsAwarded).toBe(18);
     expect(res.body.clicks).toBe(7);
     expect(res.body.links[0].code).toBe("raidcta1");
+    expect(res.body.nextPlay).toMatchObject({
+      missionId: "m1",
+      taskId: "t2",
+      playId: "share-telegram"
+    });
   });
 
   it("includes click counts on mission details", async () => {
@@ -606,6 +683,52 @@ describe("contributor profile", () => {
     expect(res.body.shortLinks[0].clicks).toBe(4);
     expect(res.body.warRoom.clickCount).toBe(4);
     expect(res.body.warRoom.checkInCount).toBe(0);
+    expect(res.body.nextPlay).toBeNull();
+  });
+
+  it("returns a personal next play on mission details when a wallet is present", async () => {
+    const app = createApp({
+      mission: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "m1",
+          title: "Spike",
+          description: "Boost it",
+          status: "ACTIVE",
+          createdAt: new Date(),
+          priority: Priority.HIGH,
+          tasks: [
+            {
+              id: "t1",
+              title: "Reply the narrative",
+              details: "play:reply-narrative",
+              actionType: "REPLY",
+              platform: "X",
+              submissions: [{ user: { wallet: "0xabc", displayName: "Raider" } }]
+            },
+            {
+              id: "t2",
+              title: "Quote the mention wave",
+              details: "play:quote-signal",
+              actionType: "SHARE",
+              platform: "X",
+              submissions: []
+            }
+          ],
+          signal: { type: "MENTION_SPIKE" },
+          shortLinks: [],
+          claims: [],
+          checkIns: []
+        })
+      }
+    } as never);
+
+    const res = await request(app).get("/missions/m1?wallet=0xabc");
+    expect(res.status).toBe(200);
+    expect(res.body.nextPlay).toMatchObject({
+      missionId: "m1",
+      taskId: "t2",
+      playId: "quote-signal"
+    });
   });
 });
 
@@ -629,6 +752,54 @@ describe("mission expiry and activity", () => {
     expect(res.status).toBe(200);
     expect(updateMany).toHaveBeenCalledTimes(1);
     expect(findMany).toHaveBeenCalledTimes(2);
+  });
+
+  it("auto-creates a daily pulse when the active board is empty", async () => {
+    const findMany = vi.fn().mockResolvedValue([]);
+    const createMission = vi.fn().mockResolvedValue({
+      id: "pulse-1",
+      title: "PEPE · Daily pulse",
+      description: "Daily standing ops (pulse:demo-community:2026-08-18). Reply, share, invite — no live signal required.",
+      status: "ACTIVE",
+      priority: Priority.LOW,
+      urgency: 25,
+      createdAt: new Date(),
+      tasks: [{ title: "Post the daily pulse", details: "play:daily-pulse" }],
+      shortLinks: [],
+      _count: { claims: 0, checkIns: 0 }
+    });
+    const createLink = vi.fn().mockResolvedValue({ id: "link-pulse", code: "pulse001", targetUrl: "http://localhost:3000/app/missions/pulse-1" });
+    const app = createApp({
+      community: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "demo-community",
+          ticker: "PEPE",
+          chainId: "ethereum",
+          contractAddress: "0xpepe",
+          xCommunityId: null,
+          dexUrl: null
+        })
+      },
+      mission: {
+        findMany,
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: createMission
+      },
+      shortLink: { create: createLink }
+    } as never);
+
+    const res = await request(app).get("/communities/demo-community/missions?status=active");
+    expect(res.status).toBe(200);
+    expect(createMission).toHaveBeenCalledTimes(1);
+    expect(createLink).toHaveBeenCalledTimes(1);
+    expect(res.body[0].title).toBe("PEPE · Daily pulse");
+    const dealt = createMission.mock.calls[0][0].data.tasks.create as { details: string }[];
+    expect(dealt.map((task) => task.details)).toEqual([
+      "play:daily-pulse",
+      "play:reply-narrative",
+      "play:share-telegram",
+      "play:invite-raider"
+    ]);
   });
 
   it("rejects claims on expired missions", async () => {

@@ -25,11 +25,11 @@ export default async function MissionBoardPage() {
     <main className="container">
       <div className="kicker">Top actions now</div>
       <h1>Mission Board</h1>
-      <p className="muted">Highest urgency first. HIGH missions expire in 2 hours, MEDIUM in 6, LOW in 24.</p>
+      <p className="muted">Highest urgency first. HIGH missions expire in 2 hours, MEDIUM in 6, LOW in 24. An empty board gets a daily pulse automatically — live KOL/mention/whale raids overlay on top of those standing plays.</p>
       {sorted.length === 0 && (
         <div className="card">
-          <p>No active missions yet. Ingest a mock signal to auto-create one.</p>
-          <Link href="/app/admin/signals">Go to Signals admin</Link>
+          <p>No community bound yet, so a daily pulse could not be created. Bind a mint first, then ingest a signal to overlay a raid.</p>
+          <Link href="/">Find a contract</Link>
         </div>
       )}
       {sorted.map((m) => (

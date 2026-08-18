@@ -2,12 +2,19 @@ import { createHash } from "crypto";
 import express, { NextFunction, Request, Response } from "express";
 import cors from "cors";
 import { nanoid } from "nanoid";
-import { Prisma, PrismaClient, ActionType, MissionStatus, Platform, Priority, SignalType } from "@prisma/client";
+import { Prisma, PrismaClient, ActionType, MissionStatus, Priority, SignalType } from "@prisma/client";
 import { computeScore, scoreAttributedClick } from "@shillops/scoring-engine";
 import { getAddress, isAddress, verifyMessage } from "viem";
 import type { Address, Hex } from "viem";
 import { evaluateLeadSeat, sameWallet, type LeadMember, type LeadSeat } from "./lead";
-import { parseXCommunityUrl, proofMatchesXCommunity, xCommunityIdFromTask, xCommunityTaskDetails, X_COMMUNITY_TASK_TITLE } from "./xcommunity";
+import { parseXCommunityUrl, proofMatchesXCommunity, xCommunityIdFromTask } from "./xcommunity";
+import {
+  dealPlays,
+  nextUnsubmittedTask,
+  serializeNextPlay,
+  utcPulseKey,
+  type NextPlay
+} from "./playbook";
 import { z } from "zod";
 import {
   fetchDexOrders,
@@ -274,13 +281,17 @@ async function dispatchAlert(message: string) {
 export function buildMissionAlertMessage(input: {
   missionId: string;
   title: string;
-  signalType: SignalType;
+  signalType: SignalType | "DAILY_PULSE";
   priority: Priority;
   metadata?: Prisma.JsonValue;
 }): string {
   const ctaUrl = `${appUrl}/app/missions/${input.missionId}`;
   const metadata = (input.metadata ?? {}) as Record<string, unknown>;
   const mintLine = mintVerifyLine(metadata);
+  if (input.signalType === "DAILY_PULSE") {
+    const ticker = String(metadata.ticker ?? "the ticker");
+    return `☀️ Daily pulse for ${ticker}\nStanding plays are live. No spike required.\nCTA: Open Mission ${ctaUrl}${mintLine}`;
+  }
   if (input.signalType === SignalType.WHALE_BUY) {
     const token = String(metadata.token ?? metadata.ticker ?? "token");
     return `🐋 Whale buy detected for ${token}\nMission auto-created. Push now.\nCTA: Join Mission ${ctaUrl}${mintLine}`;
@@ -303,7 +314,7 @@ function mintVerifyLine(metadata: Record<string, unknown>): string {
 async function notifyMissionCreated(
   missionId: string,
   title: string,
-  signalType: SignalType,
+  signalType: SignalType | "DAILY_PULSE",
   priority: Priority,
   metadata?: Prisma.JsonValue
 ) {
@@ -410,6 +421,16 @@ async function resolveBoundCommunity(
   return { community, token: lookup.token };
 }
 
+function tasksFromDeal(ctx: Parameters<typeof dealPlays>[0]) {
+  return dealPlays(ctx).map((play) => ({
+    title: play.title,
+    details: play.details,
+    actionType: play.actionType,
+    platform: play.platform,
+    basePoints: play.basePoints
+  }));
+}
+
 async function createMissionFromSignal(
   prisma: PrismaClient,
   signal: { id: string; communityId: string; type: SignalType; severity: number; metadata: Prisma.JsonValue | null }
@@ -425,25 +446,11 @@ async function createMissionFromSignal(
     ? `Auto-created from ${signal.type} on ${chainId ?? "chain"} ${contractAddress}. Join only this mint.`
     : `Auto-created mission from ${signal.type} signal`;
   const community = await prisma.community?.findUnique?.({ where: { id: signal.communityId } });
-  const tasks: {
-    title: string;
-    details?: string;
-    actionType: ActionType;
-    platform: Platform;
-    basePoints: number;
-  }[] = [
-    { title: "Reply with narrative", actionType: ActionType.REPLY, platform: Platform.X, basePoints: 10 },
-    { title: "Share in Telegram", actionType: ActionType.SHARE, platform: Platform.TELEGRAM, basePoints: 6 }
-  ];
-  if (community?.xCommunityId) {
-    tasks.push({
-      title: X_COMMUNITY_TASK_TITLE,
-      details: xCommunityTaskDetails(community.xCommunityId),
-      actionType: ActionType.SHARE,
-      platform: Platform.X,
-      basePoints: 8
-    });
-  }
+  const tasks = tasksFromDeal({
+    signalType: signal.type,
+    xCommunityId: community?.xCommunityId,
+    dexUrl: community?.dexUrl
+  });
   const mission = await prisma.mission.create({
     data: {
       communityId: signal.communityId,
@@ -459,6 +466,98 @@ async function createMissionFromSignal(
   const shortLink = await createTrackedLink(prisma, signal.communityId, mission.id);
   await notifyMissionCreated(mission.id, mission.title, signal.type, mission.priority, signal.metadata as Prisma.JsonValue | undefined);
   return { ...mission, shortLinks: [...(mission.shortLinks ?? []), shortLink] };
+}
+
+const pulseMissionInclude = {
+  tasks: true,
+  shortLinks: { where: { userId: null }, include: { _count: { select: { clicks: true } } } },
+  _count: { select: { claims: true, checkIns: true } }
+} as const;
+
+async function ensureDailyPulse(prisma: PrismaClient, communityId: string) {
+  const community = await prisma.community?.findUnique?.({ where: { id: communityId } });
+  if (!community) return null;
+  const key = utcPulseKey(communityId);
+  const existing = await prisma.mission?.findFirst?.({
+    where: { communityId, description: { contains: key } },
+    include: pulseMissionInclude
+  });
+  if (existing) return existing.status === MissionStatus.ACTIVE && !isMissionStale(existing) ? existing : null;
+  const ticker = community.ticker || "the ticker";
+  const tasks = tasksFromDeal({
+    pulse: true,
+    xCommunityId: community.xCommunityId,
+    dexUrl: community.dexUrl
+  });
+  const mission = await prisma.mission.create({
+    data: {
+      communityId,
+      title: `${ticker} · Daily pulse`,
+      description: `Daily standing ops (${key}). Reply, share, invite — no live signal required.`,
+      priority: Priority.LOW,
+      urgency: 25,
+      tasks: { create: tasks }
+    },
+    include: pulseMissionInclude
+  });
+  const shortLink = await createTrackedLink(prisma, communityId, mission.id);
+  await notifyMissionCreated(mission.id, mission.title, "DAILY_PULSE", mission.priority, {
+    ticker,
+    chainId: community.chainId,
+    contractAddress: community.contractAddress
+  });
+  return {
+    ...mission,
+    shortLinks: [...(mission.shortLinks ?? []), shortLink]
+  };
+}
+
+function nextPlayFromMission(
+  mission: {
+    id: string;
+    title: string;
+    tasks?: {
+      id: string;
+      title: string;
+      details?: string | null;
+      actionType?: string;
+      platform?: string;
+      submissions?: { user?: { wallet: string } }[];
+    }[];
+  },
+  wallet?: string
+): NextPlay | null {
+  if (!wallet || !mission.tasks?.length) return null;
+  const submitted = mission.tasks
+    .filter((task) => (task.submissions ?? []).some((sub) => sameWallet(sub.user?.wallet ?? "", wallet)))
+    .map((task) => task.id);
+  const task = nextUnsubmittedTask(mission.tasks, wallet, mission.id, submitted);
+  return task ? serializeNextPlay(task, mission) : null;
+}
+
+function nextPlayFromClaims(
+  wallet: string,
+  claims: {
+    mission: {
+      id: string;
+      title: string;
+      status: string;
+      urgency?: number;
+      tasks?: { id: string; title: string; details?: string | null; actionType?: string; platform?: string }[];
+    };
+  }[],
+  submittedTaskIds: Iterable<string>
+): NextPlay | null {
+  const done = new Set(submittedTaskIds);
+  const active = [...claims]
+    .filter((claim) => claim.mission.status === MissionStatus.ACTIVE)
+    .sort((a, b) => (b.mission.urgency ?? 0) - (a.mission.urgency ?? 0));
+  for (const claim of active) {
+    const tasks = claim.mission.tasks ?? [];
+    const task = nextUnsubmittedTask(tasks, wallet, claim.mission.id, done);
+    if (task) return serializeNextPlay(task, claim.mission);
+  }
+  return null;
 }
 
 function asyncRoute<T extends Request>(fn: (req: T, res: Response, next: NextFunction) => Promise<unknown>) {
@@ -620,7 +719,18 @@ export function createApp(prisma: PrismaClient) {
     const [claims, submissions, scoreAgg, leaderboard, links] = await Promise.all([
       prisma.missionClaim.findMany({
         where: { userId: user.id, mission: { communityId } },
-        include: { mission: { select: { id: true, title: true, status: true, priority: true, urgency: true } } },
+        include: {
+          mission: {
+            select: {
+              id: true,
+              title: true,
+              status: true,
+              priority: true,
+              urgency: true,
+              tasks: { select: { id: true, title: true, details: true, actionType: true, platform: true } }
+            }
+          }
+        },
         orderBy: { claimedAt: "desc" }
       }),
       prisma.submission.findMany({
@@ -646,6 +756,11 @@ export function createApp(prisma: PrismaClient) {
     ]);
 
     const rankIndex = leaderboard.findIndex((row) => row.userId === user.id);
+    const nextPlay = nextPlayFromClaims(
+      wallet,
+      claims,
+      submissions.map((submission) => submission.taskId)
+    );
     const trackedLinks = links.map((link) => ({
       code: link.code,
       targetUrl: link.targetUrl,
@@ -660,6 +775,7 @@ export function createApp(prisma: PrismaClient) {
       rank: rankIndex >= 0 ? rankIndex + 1 : null,
       clicks: trackedLinks.reduce((sum, link) => sum + link.clicks, 0),
       claimedMissionIds: claims.map((claim) => claim.missionId),
+      nextPlay,
       claims: claims.map((claim) => ({
         missionId: claim.mission.id,
         title: claim.mission.title,
@@ -942,15 +1058,16 @@ export function createApp(prisma: PrismaClient) {
   app.get("/communities/:id/missions", asyncRoute(async (req, res) => {
     await persistExpiredMissions(prisma, req.params.id);
     const status = (req.query.status as string | undefined)?.toUpperCase();
-    const missions = await prisma.mission.findMany({
-      where: { communityId: req.params.id, status: status ? (status as MissionStatus) : MissionStatus.ACTIVE },
-      include: {
-        tasks: true,
-        shortLinks: { where: { userId: null }, include: { _count: { select: { clicks: true } } } },
-        _count: { select: { claims: true, checkIns: true } }
-      },
+    const requested = status ? (status as MissionStatus) : MissionStatus.ACTIVE;
+    let missions = await prisma.mission.findMany({
+      where: { communityId: req.params.id, status: requested },
+      include: pulseMissionInclude,
       orderBy: { createdAt: "desc" }
     });
+    if (requested === MissionStatus.ACTIVE && missions.length === 0) {
+      const pulse = await ensureDailyPulse(prisma, req.params.id);
+      if (pulse) missions = [pulse];
+    }
     res.json(missions.map((mission) => ({
       ...mission,
       claimsCount: mission._count?.claims ?? 0,
@@ -1061,11 +1178,13 @@ export function createApp(prisma: PrismaClient) {
       await prisma.mission.update({ where: { id: mission.id }, data: { status: MissionStatus.EXPIRED } });
       mission = { ...mission, status: MissionStatus.EXPIRED };
     }
+    const actorWallet = resolveActorWallet(req, typeof req.query.wallet === "string" ? req.query.wallet : undefined);
     res.json({
       ...mission,
       claimsCount: mission.claims.length,
       shortLinks: serializeShortLinks((mission.shortLinks ?? []).filter((link) => !link.userId)),
       warRoom: serializeWarRoom(mission),
+      nextPlay: nextPlayFromMission(mission, actorWallet),
       ...withExpiryFields(mission)
     });
   }));

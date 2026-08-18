@@ -16,7 +16,7 @@ export default async function AdminSignalsPage() {
   return (
     <main className="container">
       <h1>Admin: Signals</h1>
-      <p className="muted">Post a mock signal against a bound mint to auto-create a mission. Ticker-only ingest is blocked.</p>
+      <p className="muted">Post a mock signal against a bound mint to overlay a raid on the standing daily pulse. Ticker-only ingest is blocked. Standing plays (reply, Telegram, invite) do not need live X/KOL/mention feeds.</p>
       <SignalIngestForm />
       {signals.length === 0 && <p>No signals stored yet.</p>}
       {signals.map((signal) => (
