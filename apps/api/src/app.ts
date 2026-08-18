@@ -508,7 +508,10 @@ async function ensureDailyPulse(prisma: PrismaClient, communityId: string) {
   });
   return {
     ...mission,
-    shortLinks: [...(mission.shortLinks ?? []), shortLink]
+    shortLinks: [
+      ...(mission.shortLinks ?? []),
+      { ...shortLink, _count: { clicks: 0 } }
+    ]
   };
 }
 
