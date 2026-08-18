@@ -1,0 +1,185 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum SignalType {
+  KOL_POST
+  MENTION_SPIKE
+  WHALE_BUY
+  VOLUME_SPIKE
+}
+
+enum MissionStatus {
+  ACTIVE
+  COMPLETED
+  EXPIRED
+}
+
+enum Platform {
+  X
+  TELEGRAM
+  DISCORD
+}
+
+enum ActionType {
+  REPLY
+  SHARE
+  BOOST
+  INVITE
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+model User {
+  id           String      @id @default(cuid())
+  wallet       String      @unique
+  displayName  String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  memberships  CommunityMember[]
+  submissions  Submission[]
+  scores       Score[]
+}
+
+model Community {
+  id               String               @id @default(cuid())
+  name             String
+  ticker           String
+  description      String?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+  members          CommunityMember[]
+  signals          Signal[]
+  missions         Mission[]
+  scoreEntries     Score[]
+  leaderboardSnaps LeaderboardSnapshot[]
+  shortLinks       ShortLink[]
+}
+
+model CommunityMember {
+  id          String   @id @default(cuid())
+  userId      String
+  communityId String
+  role        String   @default("member")
+  joinedAt    DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, communityId])
+}
+
+model Signal {
+  id            String      @id @default(cuid())
+  communityId   String
+  type          SignalType
+  severity      Int
+  sourceRef     String?
+  dedupeKey     String      @unique
+  metadata      Json?
+  createdAt     DateTime    @default(now())
+  community     Community   @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  mission       Mission?
+}
+
+model Mission {
+  id            String       @id @default(cuid())
+  communityId   String
+  signalId      String?      @unique
+  title         String
+  description   String
+  status        MissionStatus @default(ACTIVE)
+  priority      Priority      @default(MEDIUM)
+  urgency       Int           @default(50)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  community     Community     @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  signal        Signal?       @relation(fields: [signalId], references: [id], onDelete: SetNull)
+  tasks         MissionTask[]
+  shortLinks    ShortLink[]
+}
+
+model MissionTask {
+  id          String       @id @default(cuid())
+  missionId   String
+  title       String
+  details     String?
+  actionType  ActionType
+  platform    Platform
+  basePoints  Int          @default(10)
+  createdAt   DateTime     @default(now())
+  mission     Mission      @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  submissions Submission[]
+}
+
+model Submission {
+  id           String   @id @default(cuid())
+  taskId        String
+  userId        String
+  proofUrl      String
+  proofText     String?
+  submittedAt   DateTime @default(now())
+  verifiedAt    DateTime?
+  isVerified    Boolean  @default(false)
+  pointsAwarded Int      @default(0)
+  task          MissionTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model EngagementEvent {
+  id           String   @id @default(cuid())
+  submissionId String?
+  type         String
+  value        Int      @default(0)
+  createdAt    DateTime @default(now())
+}
+
+model Score {
+  id           String   @id @default(cuid())
+  userId       String
+  communityId  String
+  points       Int
+  reason       String
+  sourceId     String?
+  createdAt    DateTime @default(now())
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  community    Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+}
+
+model LeaderboardSnapshot {
+  id          String   @id @default(cuid())
+  communityId String
+  generatedAt DateTime @default(now())
+  payload     Json
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+}
+
+model ShortLink {
+  id          String   @id @default(cuid())
+  communityId String
+  missionId   String?
+  code        String   @unique
+  targetUrl   String
+  createdAt   DateTime @default(now())
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  mission     Mission?  @relation(fields: [missionId], references: [id], onDelete: SetNull)
+  clicks      ShortLinkClick[]
+}
+
+model ShortLinkClick {
+  id          String   @id @default(cuid())
+  shortLinkId String
+  referrer    String?
+  userAgent   String?
+  ipHash      String?
+  createdAt   DateTime @default(now())
+  shortLink   ShortLink @relation(fields: [shortLinkId], references: [id], onDelete: Cascade)
+}
