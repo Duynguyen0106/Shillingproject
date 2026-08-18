@@ -2,7 +2,7 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import { nanoid } from "nanoid";
-import { PrismaClient, ActionType, MissionStatus, Platform, Priority, SignalType } from "@prisma/client";
+import { Prisma, PrismaClient, ActionType, MissionStatus, Platform, Priority, SignalType } from "@prisma/client";
 
 const app = express();
 const prisma = new PrismaClient();
@@ -103,10 +103,11 @@ app.post("/signals/ingest", async (req, res) => {
     metadata?: Record<string, unknown>;
   };
   const dedupeKey = `${communityId}:${type}:${sourceRef ?? ""}`;
+  const safeMetadata = (metadata ?? undefined) as Prisma.InputJsonValue | undefined;
   const signal = await prisma.signal.upsert({
     where: { dedupeKey },
-    update: { severity, metadata },
-    create: { communityId, type, severity, sourceRef, metadata, dedupeKey }
+    update: { severity, metadata: safeMetadata },
+    create: { communityId, type, severity, sourceRef, metadata: safeMetadata, dedupeKey }
   });
 
   let mission = await prisma.mission.findFirst({ where: { signalId: signal.id } });
