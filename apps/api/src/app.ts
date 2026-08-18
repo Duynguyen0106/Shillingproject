@@ -6,6 +6,7 @@ import { Prisma, PrismaClient, ActionType, MissionStatus, Platform, Priority, Si
 import { computeScore, scoreAttributedClick } from "@shillops/scoring-engine";
 import { getAddress, isAddress, verifyMessage } from "viem";
 import type { Address, Hex } from "viem";
+import { evaluateLeadSeat, sameWallet, type LeadMember, type LeadSeat } from "./lead";
 import { parseXCommunityUrl, proofMatchesXCommunity, xCommunityIdFromTask, xCommunityTaskDetails, X_COMMUNITY_TASK_TITLE } from "./xcommunity";
 import { z } from "zod";
 import {
