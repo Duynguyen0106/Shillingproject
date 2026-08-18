@@ -7,7 +7,15 @@ import { computeScore, scoreAttributedClick } from "@shillops/scoring-engine";
 import { getAddress, isAddress, verifyMessage } from "viem";
 import type { Address, Hex } from "viem";
 import { z } from "zod";
-import { lookupDexToken, normalizeContract, parseTokenQuery, tokenTrustSignals } from "./dexscreener";
+import {
+  fetchDexOrders,
+  lookupDexToken,
+  normalizeContract,
+  parseTokenQuery,
+  tokenProofFromOrders,
+  tokenTrustSignals,
+  type CanonicalToken
+} from "./dexscreener";
 
 const appUrl = process.env.APP_URL || "http://localhost:3000";
 const sessions = new Map<string, { wallet: string }>();
@@ -46,11 +54,18 @@ const joinCommunitySchema = z.object({
 });
 
 const ingestSignalSchema = z.object({
-  communityId: z.string().min(3),
+  communityId: z.string().min(3).optional(),
+  chainId: z.string().min(2).optional(),
+  contractAddress: z.string().min(3).optional(),
+  q: z.string().min(2).optional(),
   type: z.nativeEnum(SignalType),
   severity: z.number().int().min(0).max(100).default(50),
   sourceRef: z.string().optional(),
   metadata: z.record(z.string(), z.unknown()).optional()
+}).superRefine((data, ctx) => {
+  if (!data.communityId && !data.q && !data.contractAddress) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Provide communityId or a DexScreener contract" });
+  }
 });
 
 const submissionSchema = z.object({
@@ -252,16 +267,24 @@ export function buildMissionAlertMessage(input: {
 }): string {
   const ctaUrl = `${appUrl}/app/missions/${input.missionId}`;
   const metadata = (input.metadata ?? {}) as Record<string, unknown>;
+  const mintLine = mintVerifyLine(metadata);
   if (input.signalType === SignalType.WHALE_BUY) {
-    const token = String(metadata.token ?? "token");
-    return `🐋 Whale buy detected for ${token}\nMission auto-created. Push now.\nCTA: Join Mission ${ctaUrl}`;
+    const token = String(metadata.token ?? metadata.ticker ?? "token");
+    return `🐋 Whale buy detected for ${token}\nMission auto-created. Push now.\nCTA: Join Mission ${ctaUrl}${mintLine}`;
   }
   if (input.signalType === SignalType.MENTION_SPIKE) {
     const ticker = String(metadata.ticker ?? "ticker");
     const upPct = String(metadata.spikePct ?? "0");
-    return `📈 Mention spike: ${ticker} up ${upPct}%\nCommunity action requested.\nCTA: Boost Narrative ${ctaUrl}`;
+    return `📈 Mention spike: ${ticker} up ${upPct}%\nCommunity action requested.\nCTA: Boost Narrative ${ctaUrl}${mintLine}`;
   }
-  return `🔥 New mission live: ${input.title}\nSignal: ${input.signalType} | Priority: ${input.priority}\nCTA: Open Mission ${ctaUrl}`;
+  return `🔥 New mission live: ${input.title}\nSignal: ${input.signalType} | Priority: ${input.priority}\nCTA: Open Mission ${ctaUrl}${mintLine}`;
+}
+
+function mintVerifyLine(metadata: Record<string, unknown>): string {
+  const chainId = typeof metadata.chainId === "string" ? metadata.chainId : null;
+  const contractAddress = typeof metadata.contractAddress === "string" ? metadata.contractAddress : null;
+  if (!chainId || !contractAddress) return "";
+  return `\nMint: ${chainId}:${contractAddress}\nVerify: ${appUrl}/c/${chainId}/${contractAddress}`;
 }
 
 async function notifyMissionCreated(
@@ -326,16 +349,74 @@ async function ensureContributorLink(
   };
 }
 
+function signalMeta(metadata: Prisma.JsonValue | null | undefined): Record<string, unknown> {
+  if (metadata && typeof metadata === "object" && !Array.isArray(metadata)) {
+    return metadata as Record<string, unknown>;
+  }
+  return {};
+}
+
+async function resolveBoundCommunity(
+  prisma: PrismaClient,
+  input: { chainId?: string; contractAddress?: string; q?: string }
+): Promise<{ community: { id: string; ticker: string; chainId: string | null; contractAddress: string | null } | null; token: CanonicalToken | null }> {
+  if (input.chainId && input.contractAddress) {
+    const community = await prisma.community.findFirst({
+      where: { chainId: input.chainId, contractAddress: normalizeContract(input.contractAddress) }
+    });
+    return { community, token: null };
+  }
+
+  const parsed = input.q
+    ? parseTokenQuery(input.q)
+    : input.contractAddress
+      ? parseTokenQuery(input.contractAddress)
+      : null;
+  if (!parsed || parsed.kind === "search") return { community: null, token: null };
+
+  if (parsed.kind === "url") {
+    const community = await prisma.community.findFirst({
+      where: { chainId: parsed.chainId, contractAddress: normalizeContract(parsed.address) }
+    });
+    if (community) return { community, token: null };
+  }
+
+  const address = parsed.kind === "url" || parsed.kind === "address" ? parsed.address : undefined;
+  if (address) {
+    const community = await prisma.community.findFirst({
+      where: { contractAddress: normalizeContract(address) }
+    });
+    if (community) return { community, token: null };
+  }
+
+  const lookup = await lookupDexToken(input.q || input.contractAddress || "");
+  if (!lookup?.token) return { community: null, token: null };
+  const community = await prisma.community.findFirst({
+    where: { chainId: lookup.token.chainId, contractAddress: lookup.token.address }
+  });
+  return { community, token: lookup.token };
+}
+
 async function createMissionFromSignal(
   prisma: PrismaClient,
   signal: { id: string; communityId: string; type: SignalType; severity: number; metadata: Prisma.JsonValue | null }
 ) {
+  const meta = signalMeta(signal.metadata);
+  const ticker = typeof meta.ticker === "string" ? meta.ticker : null;
+  const chainId = typeof meta.chainId === "string" ? meta.chainId : null;
+  const contractAddress = typeof meta.contractAddress === "string" ? meta.contractAddress : null;
+  const title = ticker
+    ? `${ticker} · ${signal.type.replaceAll("_", " ")} response`
+    : `${signal.type.replaceAll("_", " ")} response`;
+  const description = contractAddress
+    ? `Auto-created from ${signal.type} on ${chainId ?? "chain"} ${contractAddress}. Join only this mint.`
+    : `Auto-created mission from ${signal.type} signal`;
   const mission = await prisma.mission.create({
     data: {
       communityId: signal.communityId,
       signalId: signal.id,
-      title: `${signal.type.replaceAll("_", " ")} response`,
-      description: `Auto-created mission from ${signal.type} signal`,
+      title,
+      description,
       priority: priorityFromSeverity(signal.severity),
       urgency: signal.severity,
       tasks: {
@@ -531,10 +612,13 @@ export function createApp(prisma: PrismaClient) {
       });
     }
     if (!token && !community) return res.status(404).json({ error: "Token not found on DexScreener" });
+    const orders = token ? await fetchDexOrders(token.chainId, token.address) : [];
+    const proof = tokenProofFromOrders(orders);
     res.json({
       token,
       listings: lookup?.listings ?? [],
-      trust: token ? tokenTrustSignals(token, parsedQuery.kind === "search") : null,
+      proof: token ? proof : null,
+      trust: token ? tokenTrustSignals(token, parsedQuery.kind === "search", proof) : null,
       community,
       ambiguous: parsedQuery.kind === "search",
       warning: "Communities are uniquely bound to a chain + contract. Ignore Telegram/Discord names that do not match this address."
@@ -601,9 +685,40 @@ export function createApp(prisma: PrismaClient) {
   }));
 
   app.post("/signals/ingest", asyncRoute(async (req, res) => {
-    const { communityId, type, severity, sourceRef, metadata } = ingestSignalSchema.parse(req.body);
+    const body = ingestSignalSchema.parse(req.body);
+    const { type, severity, sourceRef, metadata } = body;
+    const bindByMint = Boolean(body.q || body.contractAddress);
+    let communityId = body.communityId;
+    let bound: { id: string; ticker: string; chainId: string | null; contractAddress: string | null } | null = null;
+    if (bindByMint) {
+      if (body.q && parseTokenQuery(body.q).kind === "search") {
+        return res.status(400).json({ error: "Ingest requires a contract or DexScreener URL, not a ticker" });
+      }
+      const resolved = await resolveBoundCommunity(prisma, body);
+      if (!resolved.community) {
+        const chainId = resolved.token?.chainId || body.chainId;
+        const contractAddress = resolved.token?.address || (body.contractAddress ? normalizeContract(body.contractAddress) : undefined);
+        return res.status(404).json({
+          error: "No Shill Ops community is bound to this contract yet",
+          chainId,
+          contractAddress,
+          bindPath: chainId && contractAddress ? `/c/${chainId}/${contractAddress}` : undefined
+        });
+      }
+      bound = resolved.community;
+      communityId = resolved.community.id;
+    }
+    if (!communityId) {
+      return res.status(400).json({ error: "Provide communityId or a DexScreener contract" });
+    }
+    const mergedMetadata = {
+      ...(metadata ?? {}),
+      ...(bound?.ticker ? { ticker: bound.ticker } : {}),
+      ...(bound?.chainId ? { chainId: bound.chainId } : {}),
+      ...(bound?.contractAddress ? { contractAddress: bound.contractAddress } : {})
+    };
     const dedupeKey = `${communityId}:${type}:${sourceRef ?? ""}`;
-    const safeMetadata = (metadata ?? undefined) as Prisma.InputJsonValue | undefined;
+    const safeMetadata = mergedMetadata as Prisma.InputJsonValue;
     const signal = await prisma.signal.upsert({
       where: { dedupeKey },
       update: { severity, metadata: safeMetadata },

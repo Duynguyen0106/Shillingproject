@@ -97,6 +97,90 @@ describe("signal to mission flow", () => {
     expect(createMission).not.toHaveBeenCalled();
     expect(res.body.mission.id).toBe("mission-existing");
   });
+
+  it("routes ingest to the community bound to that contract", async () => {
+    const findCommunity = vi.fn().mockResolvedValue({
+      id: "pepe-community",
+      ticker: "PEPE",
+      chainId: "ethereum",
+      contractAddress: "0x6982508145454ce325ddbe47a25d4ec3d2311933"
+    });
+    const upsertSignal = vi.fn().mockResolvedValue({
+      id: "sig-mint",
+      communityId: "pepe-community",
+      type: SignalType.VOLUME_SPIKE,
+      severity: 90,
+      metadata: {
+        ticker: "PEPE",
+        chainId: "ethereum",
+        contractAddress: "0x6982508145454ce325ddbe47a25d4ec3d2311933"
+      }
+    });
+    const findMission = vi.fn().mockResolvedValue(null);
+    const createMission = vi.fn().mockResolvedValue({
+      id: "mission-mint",
+      title: "PEPE · VOLUME SPIKE response",
+      priority: Priority.HIGH,
+      shortLinks: []
+    });
+    const createLink = vi.fn().mockResolvedValue({ id: "link-mint", code: "mintcta1" });
+
+    const app = createApp({
+      community: { findFirst: findCommunity },
+      signal: { upsert: upsertSignal },
+      mission: { findFirst: findMission, create: createMission },
+      shortLink: { create: createLink }
+    } as never);
+
+    const res = await request(app).post("/signals/ingest").send({
+      chainId: "ethereum",
+      contractAddress: "0x6982508145454ce325ddbe47a25d4ec3d2311933",
+      type: "VOLUME_SPIKE",
+      severity: 90,
+      sourceRef: "dex-vol-1"
+    });
+
+    expect(res.status).toBe(200);
+    expect(findCommunity).toHaveBeenCalledWith({
+      where: {
+        chainId: "ethereum",
+        contractAddress: "0x6982508145454ce325ddbe47a25d4ec3d2311933"
+      }
+    });
+    expect(upsertSignal.mock.calls[0][0].create.communityId).toBe("pepe-community");
+    expect(upsertSignal.mock.calls[0][0].create.metadata).toMatchObject({
+      ticker: "PEPE",
+      chainId: "ethereum",
+      contractAddress: "0x6982508145454ce325ddbe47a25d4ec3d2311933"
+    });
+    expect(createMission.mock.calls[0][0].data.title).toBe("PEPE · VOLUME SPIKE response");
+  });
+
+  it("rejects ticker-only ingest so signals cannot land on a spoofed name", async () => {
+    const res = await request(createApp({} as never)).post("/signals/ingest").send({
+      q: "PEPE",
+      type: "MENTION_SPIKE",
+      severity: 80,
+      sourceRef: "ticker-only"
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("Ingest requires a contract or DexScreener URL, not a ticker");
+  });
+
+  it("returns 404 when the mint has no bound community", async () => {
+    const app = createApp({
+      community: { findFirst: vi.fn().mockResolvedValue(null) }
+    } as never);
+    const res = await request(app).post("/signals/ingest").send({
+      chainId: "ethereum",
+      contractAddress: "0x6982508145454ce325ddbe47a25d4ec3d2311933",
+      type: "WHALE_BUY",
+      severity: 70,
+      sourceRef: "unbound"
+    });
+    expect(res.status).toBe(404);
+    expect(res.body.bindPath).toBe("/c/ethereum/0x6982508145454ce325ddbe47a25d4ec3d2311933");
+  });
 });
 
 describe("leaderboard aggregation response", () => {
@@ -150,9 +234,10 @@ describe("scoring and alerts", () => {
       title: "Spike response",
       signalType: SignalType.MENTION_SPIKE,
       priority: Priority.MEDIUM,
-      metadata: { ticker: "PEPE", spikePct: 42 }
+      metadata: { ticker: "PEPE", spikePct: 42, chainId: "ethereum", contractAddress: "0xpepe" }
     });
     expect(spike).toContain("Mention spike: PEPE up 42%");
+    expect(spike).toContain("/c/ethereum/0xpepe");
   });
 
   it("builds social share copy with the CTA", () => {
@@ -578,21 +663,29 @@ describe("DexScreener contract lookup", () => {
   });
 
   it("returns the DexScreener token and the community bound to that contract", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        pairs: [{
-          chainId: "ethereum",
-          url: "https://dexscreener.com/ethereum/0xpair",
-          pairAddress: "0xpair",
-          baseToken: {
-            address: "0x6982508145454ce325ddbe47a25d4ec3d2311933",
-            name: "Pepe",
-            symbol: "PEPE"
-          },
-          liquidity: { usd: 1_000_000 }
-        }]
-      })
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async (url: string) => {
+      if (String(url).includes("/orders/")) {
+        return {
+          ok: true,
+          json: async () => [{ type: "communityTakeover", status: "approved" }]
+        };
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          pairs: [{
+            chainId: "ethereum",
+            url: "https://dexscreener.com/ethereum/0xpair",
+            pairAddress: "0xpair",
+            baseToken: {
+              address: "0x6982508145454ce325ddbe47a25d4ec3d2311933",
+              name: "Pepe",
+              symbol: "PEPE"
+            },
+            liquidity: { usd: 1_000_000 }
+          }]
+        })
+      };
     }));
     const app = createApp({
       community: {
@@ -615,6 +708,8 @@ describe("DexScreener contract lookup", () => {
     expect(res.body.ambiguous).toBe(false);
     expect(res.body.trust.level).toBe("caution");
     expect(res.body.listings[0].chainId).toBe("ethereum");
+    expect(res.body.proof.communityTakeover).toBe(true);
+    expect(res.body.trust.reasons.some((reason: string) => reason.includes("community takeover"))).toBe(true);
   });
 
   it("requires a wallet to bind a new contract community", async () => {

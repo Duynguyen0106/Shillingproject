@@ -100,6 +100,18 @@ label {
   border-color: #f97316;
   color: #fdba74;
 }
+.badge.caution {
+  border-color: #eab308;
+  color: #fde68a;
+}
+.badge.ok {
+  border-color: #22c55e;
+  color: #86efac;
+}
+.badge.paid {
+  border-color: #38bdf8;
+  color: #7dd3fc;
+}
 .rank {
   font-size: 20px;
   font-weight: 700;

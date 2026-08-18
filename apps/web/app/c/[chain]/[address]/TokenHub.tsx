@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { API_BASE } from "../../../../lib/config";
 import { storeCommunity } from "../../../../lib/community";
+import { formatRemaining } from "../../../../lib/missionTime";
 import { authHeaders, getStoredWallet, shortAddress } from "../../../../lib/session";
 import { useConnectedWallet } from "../../../../lib/useConnectedWallet";
 import ConnectWalletButton from "../../../ConnectWalletButton";
@@ -13,12 +14,27 @@ type TrustReport = {
   reasons: string[];
 };
 
+type TokenProof = {
+  paidProfile: boolean;
+  communityTakeover: boolean;
+  ads: boolean;
+};
+
 type Listing = {
   chainId: string;
   address: string;
   name: string;
   symbol: string;
   liquidityUsd: number;
+};
+
+type Mission = {
+  id: string;
+  title: string;
+  description: string;
+  priority: string;
+  remainingMs?: number | null;
+  claimsCount?: number;
 };
 
 type LookupResponse = {
@@ -39,6 +55,7 @@ type LookupResponse = {
     socials?: { type: string; url: string }[];
   } | null;
   listings?: Listing[];
+  proof?: TokenProof | null;
   trust?: TrustReport | null;
   community: {
     id: string;
@@ -64,6 +81,7 @@ function pairAge(createdAt?: number | null): string | null {
 export default function TokenHub({ chain, address }: { chain: string; address: string }) {
   const { connected, wallet } = useConnectedWallet();
   const [data, setData] = useState<LookupResponse | null>(null);
+  const [missions, setMissions] = useState<Mission[]>([]);
   const [status, setStatus] = useState("Loading DexScreener…");
   const [busy, setBusy] = useState(false);
 
@@ -90,6 +108,21 @@ export default function TokenHub({ chain, address }: { chain: string; address: s
     };
     void load();
   }, [chain, address]);
+
+  useEffect(() => {
+    const communityId = data?.community?.id;
+    if (!communityId) {
+      setMissions([]);
+      return;
+    }
+    const loadMissions = async () => {
+      const res = await fetch(`${API_BASE}/communities/${communityId}/missions?status=active`);
+      if (!res.ok) return;
+      const body = (await res.json()) as Mission[];
+      setMissions(Array.isArray(body) ? body : []);
+    };
+    void loadMissions();
+  }, [data?.community?.id]);
 
   async function bindCommunity() {
     if (!wallet) {
@@ -121,7 +154,7 @@ export default function TokenHub({ chain, address }: { chain: string; address: s
       contractAddress: body.community.contractAddress,
       dexUrl: body.community.dexUrl
     });
-    setData((current) => ({ token: current?.token ?? body.token, community: body.community, warning: current?.warning, trust: current?.trust, listings: current?.listings }));
+    setData((current) => ({ token: current?.token ?? body.token, community: body.community, warning: current?.warning, trust: current?.trust, listings: current?.listings, proof: current?.proof }));
     setStatus(body.created ? "Community created and bound to this contract." : "Opened the existing community for this contract.");
     setBusy(false);
   }
@@ -129,6 +162,7 @@ export default function TokenHub({ chain, address }: { chain: string; address: s
   const token = data?.token;
   const community = data?.community;
   const trust = data?.trust;
+  const proof = data?.proof;
   const otherChains = (data?.listings ?? []).filter((listing) => listing.chainId !== chain);
 
   return (
@@ -140,7 +174,13 @@ export default function TokenHub({ chain, address }: { chain: string; address: s
           <div className="row">
             {token.imageUrl && <img src={token.imageUrl} alt="" width={40} height={40} style={{ borderRadius: 8 }} />}
             <span className="badge">{token.chainId}</span>
-            {trust && <span className={`badge ${trust.level === "high-risk" ? "high" : ""}`}>{trust.level}</span>}
+            {proof?.communityTakeover && <span className="badge paid">Dex CTO</span>}
+            {proof?.paidProfile && <span className="badge ok">Paid profile</span>}
+            {trust && (
+              <span className={`badge ${trust.level === "high-risk" ? "high" : trust.level === "caution" ? "caution" : "ok"}`}>
+                {trust.level}
+              </span>
+            )}
             <code>{shortAddress(token.address)}</code>
           </div>
           <p className="muted">
@@ -207,8 +247,9 @@ export default function TokenHub({ chain, address }: { chain: string; address: s
           </p>
           <p className="muted">{community.description}</p>
           <div className="row">
-            <Link className="btn" href="/app">Open missions</Link>
+            <Link className="btn" href="/app">Open mission board</Link>
             <Link className="btn secondary" href="/app/me">My Ops</Link>
+            <Link className="btn secondary" href="/app/admin/signals">Ingest signal</Link>
           </div>
         </div>
       ) : (
@@ -222,6 +263,23 @@ export default function TokenHub({ chain, address }: { chain: string; address: s
             <button className="btn" disabled={busy} onClick={() => void bindCommunity()}>Bind contract and open community</button>
           ) : (
             <ConnectWalletButton />
+          )}
+        </div>
+      )}
+      {community && (
+        <div className="card">
+          <h3>Live missions for this mint</h3>
+          {missions.length === 0 ? (
+            <p className="muted">No active missions yet. Ingest a signal against this contract to open one.</p>
+          ) : (
+            missions.map((mission) => (
+              <p key={mission.id}>
+                <Link href={`/app/missions/${mission.id}`}>{mission.title}</Link>
+                {" "}· {mission.priority}
+                {typeof mission.remainingMs === "number" ? ` · ${formatRemaining(mission.remainingMs)}` : ""}
+                {typeof mission.claimsCount === "number" ? ` · ${mission.claimsCount} claims` : ""}
+              </p>
+            ))
           )}
         </div>
       )}

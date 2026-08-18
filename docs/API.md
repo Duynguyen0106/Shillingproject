@@ -6,14 +6,14 @@
 - GET `/me` with `Authorization: Bearer <token>` or `?wallet=` — includes points, rank, claims, submissions, and personal tracked links for `?communityId=`
 
 ## Community
-- GET `/tokens/lookup?q=` or `?chain=&address=` — DexScreener lookup, trust signals, other-chain listings, and the community bound to that contract
+- GET `/tokens/lookup?q=` or `?chain=&address=` — DexScreener lookup, trust signals, paid/CTO proof, other-chain listings, and the community bound to that contract
 - POST `/communities/from-token` `{ chainId, contractAddress, wallet? }` — first wallet binds the only community for that mint
 - POST `/communities`
 - GET `/communities/:id`
 - POST `/communities/:id/join`
 
 ## Signals / Missions
-- POST `/signals/ingest`
+- POST `/signals/ingest` `{ communityId? , chainId?, contractAddress?, q?, type, severity, sourceRef?, metadata? }` — if a mint is provided, the signal is routed to the community uniquely bound to that contract; ticker search is rejected; 404 if the mint is unbound
 - GET `/communities/:id/signals`
 - POST `/signals/:id/create-mission`
 - GET `/communities/:id/missions?status=active` — expires stale missions (HIGH 2h, MEDIUM 6h, LOW 24h) then lists

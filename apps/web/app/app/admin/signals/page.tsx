@@ -16,7 +16,7 @@ export default async function AdminSignalsPage() {
   return (
     <main className="container">
       <h1>Admin: Signals</h1>
-      <p className="muted">Post a mock signal to auto-create a mission and fire Telegram/Discord alerts.</p>
+      <p className="muted">Post a mock signal against a bound mint to auto-create a mission. Ticker-only ingest is blocked.</p>
       <SignalIngestForm />
       {signals.length === 0 && <p>No signals stored yet.</p>}
       {signals.map((signal) => (

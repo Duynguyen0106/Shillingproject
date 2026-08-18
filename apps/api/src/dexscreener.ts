@@ -50,6 +50,19 @@ export type TrustReport = {
   reasons: string[];
 };
 
+export type DexOrder = {
+  type?: string;
+  status?: string;
+  paymentTimestamp?: number;
+};
+
+export type TokenProof = {
+  paidProfile: boolean;
+  communityTakeover: boolean;
+  ads: boolean;
+  orders: { type: string; status: string }[];
+};
+
 export type DexLookupResult = {
   token: CanonicalToken;
   listings: ChainListing[];
@@ -170,31 +183,78 @@ export function chainListings(pairs: DexPair[], tokenAddress: string): ChainList
   return [...byChain.values()].sort((a, b) => b.liquidityUsd - a.liquidityUsd);
 }
 
-export function tokenTrustSignals(token: CanonicalToken, ambiguous = false): TrustReport {
-  const reasons: string[] = [];
+export function tokenProofFromOrders(orders: DexOrder[]): TokenProof {
+  const approved = orders.filter((order) => (order.status || "").toLowerCase() === "approved");
+  const types = new Set(approved.map((order) => order.type || ""));
+  return {
+    paidProfile: types.has("tokenProfile"),
+    communityTakeover: types.has("communityTakeover"),
+    ads: types.has("tokenAd") || types.has("trendingBarAd"),
+    orders: approved.map((order) => ({
+      type: order.type || "unknown",
+      status: order.status || "approved"
+    }))
+  };
+}
+
+export function tokenTrustSignals(
+  token: CanonicalToken,
+  ambiguous = false,
+  proof?: TokenProof | null
+): TrustReport {
+  const positives: string[] = [];
+  const risks: string[] = [];
+  if (proof?.communityTakeover) {
+    positives.push("DexScreener community takeover is approved on this mint.");
+  }
+  if (proof?.paidProfile) {
+    positives.push("DexScreener approved token profile for this contract.");
+  }
+  if (proof?.ads) {
+    positives.push("This mint has an approved DexScreener ad or boost.");
+  }
   if (ambiguous || token.matchedBy === "search") {
-    reasons.push("Ticker search is ambiguous. Confirm this exact contract on DexScreener.");
+    risks.push("Ticker search is ambiguous. Confirm this exact contract on DexScreener.");
   }
   if (token.liquidityUsd < 10_000) {
-    reasons.push("Liquidity is under $10k. Thin pools are a common scam/honeypot pattern.");
+    risks.push("Liquidity is under $10k. Thin pools are a common scam/honeypot pattern.");
   } else if (token.liquidityUsd < 50_000) {
-    reasons.push("Liquidity is under $50k. Treat this mint as high-caution.");
+    risks.push("Liquidity is under $50k. Treat this mint as high-caution.");
   }
   if (token.pairCreatedAt && Date.now() - token.pairCreatedAt < 24 * 60 * 60 * 1000) {
-    reasons.push("This pair is less than 24 hours old.");
+    risks.push("This pair is less than 24 hours old.");
   }
   if (token.socials.length === 0 && token.websites.length === 0) {
-    reasons.push("DexScreener lists no website or socials for this pair.");
+    risks.push("DexScreener lists no website or socials for this pair.");
   }
-  const level = reasons.some((reason) => reason.includes("under $10k"))
+  const level = risks.some((reason) => reason.includes("under $10k"))
     ? "high-risk"
-    : reasons.length > 0
+    : risks.length > 0
       ? "caution"
       : "ok";
+  const reasons = [...positives, ...risks];
   if (level === "ok") {
     reasons.push("Highest-liquidity DexScreener market for this contract. Still verify the address before joining any chat.");
   }
   return { level, reasons };
+}
+
+export async function fetchDexOrders(
+  chainId: string,
+  address: string,
+  fetcher: typeof fetch = fetch
+): Promise<DexOrder[]> {
+  try {
+    const res = await fetcher(
+      `https://api.dexscreener.com/orders/v1/${encodeURIComponent(chainId)}/${encodeURIComponent(address)}`,
+      { headers: { accept: "application/json" } }
+    );
+    if (!res.ok) return [];
+    const body = await res.json();
+    return Array.isArray(body) ? (body as DexOrder[]) : [];
+  } catch {
+    return [];
+  }
 }
 
 function pairsFromBody(body: unknown): DexPair[] {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseTokenQuery, pickCanonicalPair, normalizeContract, tokenTrustSignals } from "./dexscreener";
+import { parseTokenQuery, pickCanonicalPair, normalizeContract, tokenTrustSignals, tokenProofFromOrders } from "./dexscreener";
 
 describe("DexScreener query parsing", () => {
   it("parses a DexScreener pair URL", () => {
@@ -51,5 +51,31 @@ describe("DexScreener query parsing", () => {
     const trust = tokenTrustSignals(token!, false);
     expect(trust.level).toBe("high-risk");
     expect(trust.reasons.some((reason) => reason.includes("$10k"))).toBe(true);
+  });
+
+  it("keeps thin liquidity high-risk even with a paid DexScreener profile", () => {
+    const token = pickCanonicalPair([
+      {
+        chainId: "ethereum",
+        pairAddress: "0xpair",
+        baseToken: { address: "0xabcabcabcabcabcabcabcabcabcabcabcabcabca", name: "Scam", symbol: "SCAM" },
+        liquidity: { usd: 800 }
+      }
+    ]);
+    const proof = tokenProofFromOrders([
+      { type: "tokenProfile", status: "approved" },
+      { type: "communityTakeover", status: "approved" }
+    ]);
+    const trust = tokenTrustSignals(token!, false, proof);
+    expect(proof.paidProfile).toBe(true);
+    expect(proof.communityTakeover).toBe(true);
+    expect(trust.level).toBe("high-risk");
+    expect(trust.reasons.some((reason) => reason.includes("community takeover"))).toBe(true);
+  });
+
+  it("ignores unpaid DexScreener orders", () => {
+    const proof = tokenProofFromOrders([{ type: "tokenProfile", status: "pending" }]);
+    expect(proof.paidProfile).toBe(false);
+    expect(proof.orders).toHaveLength(0);
   });
 });
