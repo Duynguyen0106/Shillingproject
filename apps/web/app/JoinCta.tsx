@@ -22,7 +22,7 @@ export default function JoinCta() {
 
   async function join() {
     if (!wallet) {
-      setStatus("Connect a wallet first, or paste an address for demo mode.");
+      setStatus("Connect a wallet from the modal first.");
       return;
     }
     setStatus("Joining...");
@@ -41,9 +41,10 @@ export default function JoinCta() {
 
   return (
     <div className="card">
-      <h3>Connect wallet and join</h3>
+      <h3>Connect any wallet and join</h3>
       <p className="muted">
-        Use MetaMask or another injected wallet. You will sign a SIWE message; the API recovers your address.
+        Opens a wallet modal with Phantom, Trust, MetaMask, Coinbase, Rainbow, OKX, Ledger, and WalletConnect.
+        “WalletConnect” in the list is the full catalog (300+ mobile wallets via QR). Then sign SIWE to create your session.
       </p>
       <ConnectWalletButton />
       <br />
@@ -52,8 +53,8 @@ export default function JoinCta() {
         <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
       </label>
       <label>
-        Wallet (filled by connect, or paste for demo)
-        <input value={wallet} onChange={(e) => setWallet(e.target.value)} placeholder="0x..." />
+        Connected address
+        <input value={wallet} readOnly placeholder="Connect a wallet to fill this" />
       </label>
       <button className="btn" onClick={join}>Join community</button>
       <p>{status}</p>

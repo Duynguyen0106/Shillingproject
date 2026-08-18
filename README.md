@@ -26,6 +26,8 @@
 3. Configure environment:
    - `cp apps/api/.env.example apps/api/.env`
    - `cp apps/web/.env.example apps/web/.env.local`
+   - set `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` from https://dashboard.reown.com
+     (needed for Trust/Phantom mobile QR and the full wallet catalog)
 4. Generate Prisma client + migrate + seed:
    - `npm run prisma:generate`
    - `npm run prisma:migrate`
@@ -41,8 +43,9 @@
 
 From the UI:
 
-1. Join the demo community on `/`.
-2. Ingest a mock signal at `/app/admin/signals` (mission auto-creates).
+1. Click **Connect wallet** and pick Phantom, Trust, MetaMask, Coinbase, or any WalletConnect wallet.
+2. Sign the SIWE message, then join the demo community on `/`.
+3. Ingest a mock signal at `/app/admin/signals` (mission auto-creates).
 3. Open the mission from `/app` and submit proof.
 4. Confirm points on `/app/leaderboard`.
 5. Create a tracked CTA at `/app/admin/attribution` and click `/r/:code`.
