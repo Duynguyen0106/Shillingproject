@@ -12,6 +12,7 @@
     "lint": "npm run lint -ws",
     "prisma:generate": "npm run prisma:generate -w @shillops/api",
     "prisma:migrate": "npm run prisma:migrate -w @shillops/api",
-    "prisma:seed": "npm run prisma:seed -w @shillops/api"
+    "prisma:seed": "npm run prisma:seed -w @shillops/api",
+    "smoke:phase1": "node scripts/phase1-smoke.mjs"
   }
 }

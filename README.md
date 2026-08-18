@@ -29,9 +29,12 @@
    - `npm run prisma:generate`
    - `npm run prisma:migrate`
    - `npm run prisma:seed`
+   - or apply SQL migration directly from `apps/api/prisma/migrations/*/migration.sql`
 5. Run API and web:
    - `npm run dev -w @shillops/api`
    - `npm run dev -w @shillops/web`
+6. Run Phase 1 smoke flow:
+   - `npm run smoke:phase1`
 
 ## Demo Flow
 
@@ -41,3 +44,18 @@
 4. Submit proof on mission details page.
 5. Points update leaderboard.
 6. Create short link via `POST /links` and track clicks with `GET /r/:code`.
+
+## Notification templates
+
+- Generic mission:
+  - `🔥 New mission live: {title}`
+  - `Signal: {type} | Priority: {priority}`
+  - `CTA: Open Mission`
+- Whale buy:
+  - `🐋 Whale buy detected for {token}`
+  - `Mission auto-created. Push now.`
+  - `CTA: Join Mission`
+- Mention spike:
+  - `📈 Mention spike: {ticker} up {x}%`
+  - `Community action requested.`
+  - `CTA: Boost Narrative`

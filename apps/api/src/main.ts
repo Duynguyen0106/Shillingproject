@@ -41,9 +41,42 @@ async function sendWebhookMessage(url: string | undefined, message: string) {
   }
 }
 
-async function notifyMissionCreated(missionId: string, title: string, signalType: SignalType, priority: Priority) {
-  const ctaUrl = `${appUrl}/app/missions/${missionId}`;
-  const baseMsg = `🔥 New mission live: ${title}\nSignal: ${signalType} | Priority: ${priority}\nCTA: Open Mission ${ctaUrl}`;
+function buildMissionAlertMessage(input: {
+  missionId: string;
+  title: string;
+  signalType: SignalType;
+  priority: Priority;
+  metadata?: Prisma.JsonValue;
+}): string {
+  const ctaUrl = `${appUrl}/app/missions/${input.missionId}`;
+  const metadata = (input.metadata ?? {}) as Record<string, unknown>;
+
+  if (input.signalType === SignalType.WHALE_BUY) {
+    const token = String(metadata.token ?? "token");
+    return `🐋 Whale buy detected for ${token}\nMission auto-created. Push now.\nCTA: Join Mission ${ctaUrl}`;
+  }
+  if (input.signalType === SignalType.MENTION_SPIKE) {
+    const ticker = String(metadata.ticker ?? "ticker");
+    const upPct = String(metadata.spikePct ?? "0");
+    return `📈 Mention spike: ${ticker} up ${upPct}%\nCommunity action requested.\nCTA: Boost Narrative ${ctaUrl}`;
+  }
+  return `🔥 New mission live: ${input.title}\nSignal: ${input.signalType} | Priority: ${input.priority}\nCTA: Open Mission ${ctaUrl}`;
+}
+
+async function notifyMissionCreated(
+  missionId: string,
+  title: string,
+  signalType: SignalType,
+  priority: Priority,
+  metadata?: Prisma.JsonValue
+) {
+  const baseMsg = buildMissionAlertMessage({
+    missionId,
+    title,
+    signalType,
+    priority,
+    metadata
+  });
   await Promise.all([
     sendWebhookMessage(process.env.TELEGRAM_WEBHOOK_URL, baseMsg),
     sendWebhookMessage(process.env.DISCORD_WEBHOOK_URL, baseMsg)
@@ -129,7 +162,7 @@ app.post("/signals/ingest", async (req, res) => {
       },
       include: { tasks: true }
     });
-    await notifyMissionCreated(mission.id, mission.title, signal.type, mission.priority);
+    await notifyMissionCreated(mission.id, mission.title, signal.type, mission.priority, signal.metadata as Prisma.JsonValue | undefined);
   }
   res.json({ signal, mission });
 });
