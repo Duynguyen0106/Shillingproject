@@ -248,3 +248,15 @@ describe("mission claims", () => {
     expect(upsertClaim).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("notification log", () => {
+  it("records telegram and discord alerts after a test send", async () => {
+    const app = createApp({} as never);
+    await request(app).post("/notifications/telegram/test");
+    const res = await request(app).get("/notifications");
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+    expect(res.body.some((entry: { channel: string }) => entry.channel === "TELEGRAM")).toBe(true);
+    expect(res.body[0].delivered).toBe(false);
+  });
+});

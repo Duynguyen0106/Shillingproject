@@ -32,5 +32,6 @@
 ## Notifications
 - POST `/notifications/telegram/test`
 - POST `/notifications/discord/test`
+- GET `/notifications` (in-app alert log; `delivered` is false when webhook URLs are unset)
 
 Invalid payloads return `400` with `{ error: "Validation failed", details: [...] }`.

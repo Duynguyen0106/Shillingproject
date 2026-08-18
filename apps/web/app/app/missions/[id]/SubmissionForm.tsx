@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { API_BASE } from "../../../../lib/config";
+import { getStoredWallet, storeSession } from "../../../../lib/session";
 
 export default function SubmissionForm({ taskId }: { taskId: string }) {
   const [wallet, setWallet] = useState("0xdemo");
@@ -10,8 +11,13 @@ export default function SubmissionForm({ taskId }: { taskId: string }) {
   const [status, setStatus] = useState("");
   const [points, setPoints] = useState<number | null>(null);
 
+  useEffect(() => {
+    setWallet(getStoredWallet());
+  }, []);
+
   async function submit() {
     setStatus("Submitting...");
+    storeSession(wallet);
     const res = await fetch(`${API_BASE}/tasks/${taskId}/submissions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -29,12 +35,18 @@ export default function SubmissionForm({ taskId }: { taskId: string }) {
   return (
     <div className="card">
       <h4>Submit proof</h4>
-      <input value={wallet} onChange={(e) => setWallet(e.target.value)} placeholder="Wallet" />
-      <br /><br />
-      <input value={proofUrl} onChange={(e) => setProofUrl(e.target.value)} placeholder="Proof URL" />
-      <br /><br />
-      <textarea value={proofText} onChange={(e) => setProofText(e.target.value)} placeholder="Proof text" />
-      <br /><br />
+      <label>
+        Wallet
+        <input value={wallet} onChange={(e) => setWallet(e.target.value)} />
+      </label>
+      <label>
+        Proof URL
+        <input value={proofUrl} onChange={(e) => setProofUrl(e.target.value)} />
+      </label>
+      <label>
+        Proof text
+        <textarea value={proofText} onChange={(e) => setProofText(e.target.value)} />
+      </label>
       <button className="btn" onClick={submit}>Submit</button>
       <p>{status}{points !== null ? ` Awarded ${points} pts.` : ""}</p>
     </div>

@@ -1,14 +1,20 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { API_BASE } from "../../../../lib/config";
+import { getStoredWallet, storeSession } from "../../../../lib/session";
 
 export default function ClaimButton({ missionId }: { missionId: string }) {
   const [wallet, setWallet] = useState("0xdemo");
   const [status, setStatus] = useState("");
 
+  useEffect(() => {
+    setWallet(getStoredWallet());
+  }, []);
+
   async function claim() {
     setStatus("Claiming...");
+    storeSession(wallet);
     const res = await fetch(`${API_BASE}/missions/${missionId}/claim`, {
       method: "POST",
       headers: { "content-type": "application/json" },

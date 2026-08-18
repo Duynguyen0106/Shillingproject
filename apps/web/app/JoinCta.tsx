@@ -1,12 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { API_BASE, COMMUNITY_ID } from "../lib/config";
+import { getStoredDisplayName, getStoredWallet, storeSession } from "../lib/session";
 
 export default function JoinCta() {
   const [wallet, setWallet] = useState("0xdemo");
   const [displayName, setDisplayName] = useState("Raider");
   const [status, setStatus] = useState("");
+
+  useEffect(() => {
+    setWallet(getStoredWallet());
+    setDisplayName(getStoredDisplayName());
+  }, []);
 
   async function join() {
     setStatus("Joining...");
@@ -15,12 +21,18 @@ export default function JoinCta() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ wallet, displayName })
     });
-    setStatus(res.ok ? "Joined demo community. Open the mission board." : "Join failed. Is the API running?");
+    if (res.ok) {
+      storeSession(wallet, displayName);
+      setStatus("Joined demo community. Open the mission board.");
+    } else {
+      setStatus("Join failed. Is the API running?");
+    }
   }
 
   return (
     <div className="card">
       <h3>Join the demo community</h3>
+      <p className="muted">Uses a mock wallet for Phase 1. SIWE verify is stubbed on the API.</p>
       <label>
         Wallet
         <input value={wallet} onChange={(e) => setWallet(e.target.value)} />

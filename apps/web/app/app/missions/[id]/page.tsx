@@ -1,5 +1,6 @@
 import { apiGet } from "../../../../lib/api";
 import ClaimButton from "./ClaimButton";
+import CompleteMissionButton from "./CompleteMissionButton";
 import SubmissionForm from "./SubmissionForm";
 
 type Task = {
@@ -36,7 +37,7 @@ export default async function MissionDetailsPage({ params }: { params: { id: str
   return (
     <main className="container">
       <h1>{mission.title}</h1>
-      <p>{mission.description}</p>
+      <p className="muted">{mission.description}</p>
       <div className="row">
         <span className={`badge ${mission.priority === "HIGH" ? "high" : ""}`}>Priority: {mission.priority}</span>
         <span>Urgency: {mission.urgency}</span>
@@ -55,6 +56,7 @@ export default async function MissionDetailsPage({ params }: { params: { id: str
         </div>
       )}
       <ClaimButton missionId={mission.id} />
+      <CompleteMissionButton missionId={mission.id} status={mission.status} />
       {mission.tasks.map((task) => (
         <div key={task.id} className="card">
           <h3>{task.title}</h3>

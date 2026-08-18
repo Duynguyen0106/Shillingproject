@@ -72,17 +72,48 @@ export function scoreSubmission(input: { actionType: ActionType; priority: Prior
   });
 }
 
-async function sendWebhookMessage(url: string | undefined, message: string) {
-  if (!url) return;
+async function sendWebhookMessage(url: string | undefined, message: string): Promise<boolean> {
+  if (!url) return false;
   try {
     await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text: message, content: message })
     });
+    return true;
   } catch {
-    // Non-blocking notification hook in MVP.
+    return false;
   }
+}
+
+type NotificationEntry = {
+  id: string;
+  channel: "TELEGRAM" | "DISCORD";
+  message: string;
+  delivered: boolean;
+  createdAt: string;
+};
+
+const notificationLog: NotificationEntry[] = [];
+
+function recordNotification(channel: NotificationEntry["channel"], message: string, delivered: boolean) {
+  notificationLog.unshift({
+    id: nanoid(8),
+    channel,
+    message,
+    delivered,
+    createdAt: new Date().toISOString()
+  });
+  notificationLog.splice(50);
+}
+
+async function dispatchAlert(message: string) {
+  const [telegramDelivered, discordDelivered] = await Promise.all([
+    sendWebhookMessage(process.env.TELEGRAM_WEBHOOK_URL, message),
+    sendWebhookMessage(process.env.DISCORD_WEBHOOK_URL, message)
+  ]);
+  recordNotification("TELEGRAM", message, telegramDelivered);
+  recordNotification("DISCORD", message, discordDelivered);
 }
 
 export function buildMissionAlertMessage(input: {
@@ -114,10 +145,7 @@ async function notifyMissionCreated(
   metadata?: Prisma.JsonValue
 ) {
   const baseMsg = buildMissionAlertMessage({ missionId, title, signalType, priority, metadata });
-  await Promise.all([
-    sendWebhookMessage(process.env.TELEGRAM_WEBHOOK_URL, baseMsg),
-    sendWebhookMessage(process.env.DISCORD_WEBHOOK_URL, baseMsg)
-  ]);
+  await dispatchAlert(baseMsg);
 }
 
 async function createTrackedLink(prisma: PrismaClient, communityId: string, missionId: string) {
@@ -381,13 +409,17 @@ export function createApp(prisma: PrismaClient) {
   }));
 
   app.post("/notifications/telegram/test", asyncRoute(async (_req, res) => {
-    await sendWebhookMessage(process.env.TELEGRAM_WEBHOOK_URL, "Test Telegram mission alert from Shill Ops MVP");
+    await dispatchAlert("Test Telegram mission alert from Shill Ops MVP");
     res.json({ ok: true });
   }));
 
   app.post("/notifications/discord/test", asyncRoute(async (_req, res) => {
-    await sendWebhookMessage(process.env.DISCORD_WEBHOOK_URL, "Test Discord mission alert from Shill Ops MVP");
+    await dispatchAlert("Test Discord mission alert from Shill Ops MVP");
     res.json({ ok: true });
+  }));
+
+  app.get("/notifications", asyncRoute(async (_req, res) => {
+    res.json(notificationLog);
   }));
 
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {

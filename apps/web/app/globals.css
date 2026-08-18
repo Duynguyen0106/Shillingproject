@@ -3,39 +3,63 @@
 }
 body {
   margin: 0;
-  font-family: Arial, sans-serif;
-  background: #09090b;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, Arial, sans-serif;
+  background:
+    radial-gradient(1200px 500px at 10% -10%, #1d4ed833, transparent 50%),
+    radial-gradient(900px 400px at 100% 0%, #ea580c22, transparent 45%),
+    #09090b;
   color: #f4f4f5;
+  min-height: 100vh;
 }
 a {
   color: #7dd3fc;
   text-decoration: none;
+}
+a.btn,
+.btn {
+  display: inline-block;
+  background: #2563eb;
+  color: #fff;
+  border: 0;
+  border-radius: 8px;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.btn.secondary {
+  background: #27272a;
+  color: #f4f4f5;
 }
 .container {
   max-width: 960px;
   margin: 0 auto;
   padding: 24px;
 }
+.hero {
+  padding: 28px 0 8px;
+}
+.kicker {
+  color: #fdba74;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+.muted {
+  color: #a1a1aa;
+}
 .card {
   border: 1px solid #27272a;
   border-radius: 12px;
   padding: 16px;
   margin-bottom: 12px;
-  background: #111114;
+  background: #111114cc;
 }
 .row {
   display: flex;
   gap: 12px;
   align-items: center;
   flex-wrap: wrap;
-}
-.btn {
-  background: #2563eb;
-  color: white;
-  border: 0;
-  border-radius: 8px;
-  padding: 8px 12px;
-  cursor: pointer;
 }
 input, textarea, select {
   width: 100%;
@@ -49,13 +73,22 @@ label {
   display: block;
   margin-bottom: 10px;
   font-size: 14px;
+  color: #d4d4d8;
 }
 .nav {
   display: flex;
   gap: 16px;
+  align-items: center;
   padding: 16px 24px;
   border-bottom: 1px solid #27272a;
-  background: #0c0c0f;
+  background: #0c0c0fcc;
+  position: sticky;
+  top: 0;
+}
+.brand {
+  color: #fff;
+  font-weight: 700;
+  margin-right: 8px;
 }
 .badge {
   border: 1px solid #3f3f46;
@@ -66,4 +99,15 @@ label {
 .badge.high {
   border-color: #f97316;
   color: #fdba74;
+}
+.rank {
+  font-size: 20px;
+  font-weight: 700;
+  color: #93c5fd;
+  width: 48px;
+}
+code {
+  background: #18181b;
+  padding: 2px 6px;
+  border-radius: 6px;
 }
