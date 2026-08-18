@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { API_BASE, COMMUNITY_ID } from "../../../../lib/config";
+import { API_BASE } from "../../../../lib/config";
+import { getStoredCommunityId } from "../../../../lib/community";
 
 export default function CreateLinkForm() {
   const [missionId, setMissionId] = useState("");
@@ -15,7 +16,7 @@ export default function CreateLinkForm() {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        communityId: COMMUNITY_ID,
+        communityId: getStoredCommunityId(),
         missionId: missionId || undefined,
         targetUrl
       })

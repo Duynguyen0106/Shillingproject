@@ -1,5 +1,5 @@
 import request from "supertest";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ActionType, Priority, SignalType } from "@prisma/client";
 import { createApp, scoreSubmission, buildMissionAlertMessage, buildShareCopy, missionTtlMs } from "./app";
 
@@ -569,5 +569,57 @@ describe("mission expiry and activity", () => {
     const res = await request(app).get("/communities/demo-community/activity");
     expect(res.status).toBe(200);
     expect(res.body[0]).toMatchObject({ type: "CLAIM", title: "Spike", wallet: "0xabc" });
+  });
+});
+
+describe("DexScreener contract lookup", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("returns the DexScreener token and the community bound to that contract", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        pairs: [{
+          chainId: "ethereum",
+          url: "https://dexscreener.com/ethereum/0xpair",
+          pairAddress: "0xpair",
+          baseToken: {
+            address: "0x6982508145454ce325ddbe47a25d4ec3d2311933",
+            name: "Pepe",
+            symbol: "PEPE"
+          },
+          liquidity: { usd: 1_000_000 }
+        }]
+      })
+    }));
+    const app = createApp({
+      community: {
+        findFirst: vi.fn().mockResolvedValue({
+          id: "demo-community",
+          name: "Pepe Raiders",
+          ticker: "PEPE",
+          chainId: "ethereum",
+          contractAddress: "0x6982508145454ce325ddbe47a25d4ec3d2311933"
+        })
+      }
+    } as never);
+
+    const res = await request(app).get("/tokens/lookup").query({
+      q: "0x6982508145454ce325ddbe47a25d4ec3d2311933"
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.token.symbol).toBe("PEPE");
+    expect(res.body.community.id).toBe("demo-community");
+    expect(res.body.ambiguous).toBe(false);
+  });
+
+  it("requires a wallet to bind a new contract community", async () => {
+    const res = await request(createApp({} as never)).post("/communities/from-token").send({
+      chainId: "ethereum",
+      contractAddress: "0x6982508145454ce325ddbe47a25d4ec3d2311933"
+    });
+    expect(res.status).toBe(401);
   });
 });

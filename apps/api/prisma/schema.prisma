@@ -57,6 +57,10 @@ model Community {
   name             String
   ticker           String
   description      String?
+  chainId          String?
+  contractAddress  String?
+  dexUrl           String?
+  imageUrl         String?
   createdAt        DateTime             @default(now())
   updatedAt        DateTime             @updatedAt
   members          CommunityMember[]
@@ -65,6 +69,8 @@ model Community {
   scoreEntries     Score[]
   leaderboardSnaps LeaderboardSnapshot[]
   shortLinks       ShortLink[]
+
+  @@unique([chainId, contractAddress])
 }
 
 model CommunityMember {

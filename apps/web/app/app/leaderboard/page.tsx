@@ -1,7 +1,7 @@
 import Link from "next/link";
 import YouBadge from "../../YouBadge";
+import { getRequestCommunityId } from "../../../lib/communityServer";
 import { apiGetSafe } from "../../../lib/api";
-import { COMMUNITY_ID } from "../../../lib/config";
 
 type Row = {
   rank: number;
@@ -11,7 +11,8 @@ type Row = {
 };
 
 export default async function LeaderboardPage() {
-  const rows = await apiGetSafe<Row[]>(`/communities/${COMMUNITY_ID}/leaderboard`, []);
+  const communityId = getRequestCommunityId();
+  const rows = await apiGetSafe<Row[]>(`/communities/${communityId}/leaderboard`, []);
   return (
     <main className="container">
       <div className="kicker">Transparent points</div>

@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import ConnectWalletButton from "./ConnectWalletButton";
-import { API_BASE, COMMUNITY_ID } from "../lib/config";
+import { API_BASE } from "../lib/config";
+import { getStoredCommunityId } from "../lib/community";
 import { authHeaders, getStoredDisplayName, getStoredWallet, storeSession } from "../lib/session";
 
 export default function JoinCta() {
@@ -26,14 +27,14 @@ export default function JoinCta() {
       return;
     }
     setStatus("Joining...");
-    const res = await fetch(`${API_BASE}/communities/${COMMUNITY_ID}/join`, {
+    const res = await fetch(`${API_BASE}/communities/${getStoredCommunityId()}/join`, {
       method: "POST",
       headers: authHeaders(),
       body: JSON.stringify({ wallet, displayName })
     });
     if (res.ok) {
       storeSession(wallet, displayName);
-      setStatus("Joined demo community. Open the mission board.");
+      setStatus("Joined the contract-bound community. Open the mission board.");
     } else {
       setStatus("Join failed. Is the API running?");
     }
@@ -43,8 +44,8 @@ export default function JoinCta() {
     <div className="card">
       <h3>Connect any wallet and join</h3>
       <p className="muted">
-        Opens a wallet modal with Phantom, Trust, MetaMask, Coinbase, Rainbow, OKX, Ledger, and WalletConnect.
-        “WalletConnect” in the list is the full catalog (300+ mobile wallets via QR). Then sign SIWE to create your session.
+        Paste the DexScreener contract first so you join the community bound to that mint, not a cloned CTO chat.
+        Then connect Phantom, Trust, MetaMask, or WalletConnect and sign SIWE.
       </p>
       <ConnectWalletButton />
       <br />

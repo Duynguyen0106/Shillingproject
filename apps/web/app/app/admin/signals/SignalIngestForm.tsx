@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { API_BASE, COMMUNITY_ID } from "../../../../lib/config";
+import { API_BASE } from "../../../../lib/config";
+import { getStoredCommunityId } from "../../../../lib/community";
 
 const SIGNAL_TYPES = ["KOL_POST", "MENTION_SPIKE", "WHALE_BUY", "VOLUME_SPIKE"] as const;
 
@@ -27,7 +28,7 @@ export default function SignalIngestForm() {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        communityId: COMMUNITY_ID,
+        communityId: getStoredCommunityId(),
         type,
         severity,
         sourceRef,

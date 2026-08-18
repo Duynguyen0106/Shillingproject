@@ -1,6 +1,6 @@
 import SignalIngestForm from "./SignalIngestForm";
+import { getRequestCommunityId } from "../../../../lib/communityServer";
 import { apiGetSafe } from "../../../../lib/api";
-import { COMMUNITY_ID } from "../../../../lib/config";
 
 type Signal = {
   id: string;
@@ -11,7 +11,8 @@ type Signal = {
 };
 
 export default async function AdminSignalsPage() {
-  const signals = await apiGetSafe<Signal[]>(`/communities/${COMMUNITY_ID}/signals`, []);
+  const communityId = getRequestCommunityId();
+  const signals = await apiGetSafe<Signal[]>(`/communities/${communityId}/signals`, []);
   return (
     <main className="container">
       <h1>Admin: Signals</h1>

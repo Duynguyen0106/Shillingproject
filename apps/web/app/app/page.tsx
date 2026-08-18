@@ -1,7 +1,7 @@
 import Link from "next/link";
 import ActivityFeed from "../ActivityFeed";
+import { getRequestCommunityId } from "../../lib/communityServer";
 import { apiGetSafe } from "../../lib/api";
-import { COMMUNITY_ID } from "../../lib/config";
 import { formatRemaining } from "../../lib/missionTime";
 
 type Mission = {
@@ -17,7 +17,8 @@ type Mission = {
 };
 
 export default async function MissionBoardPage() {
-  const missions = await apiGetSafe<Mission[]>(`/communities/${COMMUNITY_ID}/missions?status=active`, []);
+  const communityId = getRequestCommunityId();
+  const missions = await apiGetSafe<Mission[]>(`/communities/${communityId}/missions?status=active`, []);
   const sorted = [...missions].sort((a, b) => b.urgency - a.urgency);
   return (
     <main className="container">
@@ -45,7 +46,7 @@ export default async function MissionBoardPage() {
           </div>
         </div>
       ))}
-      <ActivityFeed />
+      <ActivityFeed communityId={communityId} />
     </main>
   );
 }

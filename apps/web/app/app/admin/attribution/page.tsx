@@ -1,6 +1,6 @@
 import CreateLinkForm from "./CreateLinkForm";
+import { getRequestCommunityId } from "../../../../lib/communityServer";
 import { apiGetSafe } from "../../../../lib/api";
-import { COMMUNITY_ID } from "../../../../lib/config";
 
 type LinkStats = {
   code: string;
@@ -13,7 +13,8 @@ type LinkStats = {
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:4000";
 
 export default async function AdminAttributionPage() {
-  const rows = await apiGetSafe<LinkStats[]>(`/communities/${COMMUNITY_ID}/attribution`, []);
+  const communityId = getRequestCommunityId();
+  const rows = await apiGetSafe<LinkStats[]>(`/communities/${communityId}/attribution`, []);
   return (
     <main className="container">
       <h1>Admin: Attribution</h1>

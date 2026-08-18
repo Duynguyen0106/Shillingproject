@@ -7,6 +7,7 @@ import { computeScore, scoreAttributedClick } from "@shillops/scoring-engine";
 import { getAddress, isAddress, verifyMessage } from "viem";
 import type { Address, Hex } from "viem";
 import { z } from "zod";
+import { lookupDexToken, normalizeContract, parseTokenQuery } from "./dexscreener";
 
 const appUrl = process.env.APP_URL || "http://localhost:3000";
 const sessions = new Map<string, { wallet: string }>();
@@ -32,7 +33,11 @@ const siweVerifySchema = z.object({
 const createCommunitySchema = z.object({
   name: z.string().min(2),
   ticker: z.string().min(2).max(12),
-  description: z.string().optional()
+  description: z.string().optional(),
+  chainId: z.string().min(2).optional(),
+  contractAddress: z.string().min(3).optional(),
+  dexUrl: z.string().url().optional(),
+  imageUrl: z.string().url().optional()
 });
 
 const joinCommunitySchema = z.object({
@@ -62,6 +67,19 @@ const createLinkSchema = z.object({
 });
 
 const claimSchema = z.object({
+  wallet: z.string().min(3).optional()
+});
+
+const tokenLookupSchema = z.object({
+  q: z.string().min(2).optional(),
+  chain: z.string().min(2).optional(),
+  address: z.string().min(3).optional()
+});
+
+const fromTokenSchema = z.object({
+  chainId: z.string().min(2).optional(),
+  contractAddress: z.string().min(3).optional(),
+  q: z.string().min(2).optional(),
   wallet: z.string().min(3).optional()
 });
 
@@ -481,8 +499,83 @@ export function createApp(prisma: PrismaClient) {
 
   app.post("/communities", asyncRoute(async (req, res) => {
     const data = createCommunitySchema.parse(req.body);
-    const community = await prisma.community.create({ data });
+    const community = await prisma.community.create({
+      data: {
+        ...data,
+        contractAddress: data.contractAddress ? normalizeContract(data.contractAddress) : undefined
+      }
+    });
     res.json(community);
+  }));
+
+  app.get("/tokens/lookup", asyncRoute(async (req, res) => {
+    const parsed = tokenLookupSchema.parse({
+      q: req.query.q,
+      chain: req.query.chain,
+      address: req.query.address
+    });
+    const query = parsed.q || (parsed.chain && parsed.address ? `${parsed.chain}:${parsed.address}` : parsed.address);
+    if (!query) return res.status(400).json({ error: "Provide q or address" });
+    const token = await lookupDexToken(query);
+    const parsedQuery = parseTokenQuery(query);
+    let community = null;
+    if (token) {
+      community = await prisma.community.findFirst({
+        where: { chainId: token.chainId, contractAddress: token.address }
+      });
+    } else if (parsedQuery.kind === "address" || parsedQuery.kind === "url") {
+      const address = normalizeContract(parsedQuery.kind === "url" ? parsedQuery.address : parsedQuery.address);
+      community = await prisma.community.findFirst({
+        where: { contractAddress: address, ...(parsedQuery.kind === "url" ? { chainId: parsedQuery.chainId } : {}) }
+      });
+    }
+    if (!token && !community) return res.status(404).json({ error: "Token not found on DexScreener" });
+    res.json({
+      token,
+      community,
+      ambiguous: parsedQuery.kind === "search",
+      warning: "Communities are uniquely bound to a chain + contract. Ignore Telegram/Discord names that do not match this address."
+    });
+  }));
+
+  app.post("/communities/from-token", asyncRoute(async (req, res) => {
+    const body = fromTokenSchema.parse(req.body ?? {});
+    const wallet = resolveActorWallet(req, body.wallet);
+    if (!wallet) return res.status(401).json({ error: "Connect a wallet and sign in first" });
+    const query = body.q || (body.chainId && body.contractAddress ? `${body.chainId}:${body.contractAddress}` : body.contractAddress);
+    if (!query) return res.status(400).json({ error: "Provide q or contractAddress" });
+    const token = await lookupDexToken(query);
+    const chainId = token?.chainId || body.chainId;
+    const contractAddress = token?.address || (body.contractAddress ? normalizeContract(body.contractAddress) : undefined);
+    if (!chainId || !contractAddress) return res.status(404).json({ error: "Token not found on DexScreener" });
+    const existing = await prisma.community.findFirst({ where: { chainId, contractAddress } });
+    let user = await prisma.user.findUnique({ where: { wallet } });
+    if (!user) user = await prisma.user.create({ data: { wallet } });
+    if (existing) {
+      await prisma.communityMember.upsert({
+        where: { userId_communityId: { userId: user.id, communityId: existing.id } },
+        update: {},
+        create: { userId: user.id, communityId: existing.id }
+      });
+      return res.json({ community: existing, token, created: false });
+    }
+    const community = await prisma.community.create({
+      data: {
+        name: token?.name || contractAddress.slice(0, 10),
+        ticker: token?.symbol || "TOKEN",
+        description: `Shill Ops community bound to ${contractAddress} on ${chainId}. Not a Telegram group name.`,
+        chainId,
+        contractAddress,
+        dexUrl: token?.dexUrl,
+        imageUrl: token?.imageUrl ?? undefined
+      }
+    });
+    await prisma.communityMember.upsert({
+      where: { userId_communityId: { userId: user.id, communityId: community.id } },
+      update: {},
+      create: { userId: user.id, communityId: community.id, role: "lead" }
+    });
+    res.json({ community, token, created: true });
   }));
 
   app.get("/communities/:id", asyncRoute(async (req, res) => {

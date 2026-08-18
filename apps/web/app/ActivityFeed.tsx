@@ -1,5 +1,4 @@
 import { apiGetSafe } from "../lib/api";
-import { COMMUNITY_ID } from "../lib/config";
 
 function shortWallet(wallet: string): string {
   if (wallet.length < 10) return wallet;
@@ -21,12 +20,12 @@ const labels: Record<ActivityEvent["type"], string> = {
   CLICK: "drove a click"
 };
 
-export default async function ActivityFeed() {
-  const events = await apiGetSafe<ActivityEvent[]>(`/communities/${COMMUNITY_ID}/activity`, []);
+export default async function ActivityFeed({ communityId }: { communityId: string }) {
+  const events = await apiGetSafe<ActivityEvent[]>(`/communities/${communityId}/activity`, []);
   return (
     <section>
       <h2>Live ops</h2>
-      <p className="muted">Claims, proofs, and attributed CTA clicks from the demo community.</p>
+      <p className="muted">Claims, proofs, and attributed CTA clicks for the contract-bound community.</p>
       {events.length === 0 && (
         <div className="card">
           <p className="muted">No community activity yet. Claim a mission to start the feed.</p>

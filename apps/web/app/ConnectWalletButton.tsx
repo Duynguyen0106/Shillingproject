@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { API_BASE, COMMUNITY_ID } from "../lib/config";
+import { API_BASE } from "../lib/config";
+import { getStoredCommunityId } from "../lib/community";
 import { clearSession, getStoredWallet, getStoredWalletLabel, shortAddress, storeSession } from "../lib/session";
 import { FEATURED_WALLETS, matchFeatured } from "../lib/wallets";
 
@@ -75,7 +76,7 @@ async function siweLogin(address: string, provider: WalletProvider, walletLabel?
   });
   if (!verify.ok) throw new Error("Signature verification failed");
   const { token, user } = await verify.json();
-  await fetch(`${API_BASE}/communities/${COMMUNITY_ID}/join`, {
+  await fetch(`${API_BASE}/communities/${getStoredCommunityId()}/join`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ wallet: user.wallet, displayName: user.displayName })

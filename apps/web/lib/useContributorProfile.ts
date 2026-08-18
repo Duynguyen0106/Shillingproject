@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { API_BASE, COMMUNITY_ID } from "./config";
+import { API_BASE } from "./config";
+import { getStoredCommunityId } from "./community";
 import { authHeaders } from "./session";
 import { useConnectedWallet } from "./useConnectedWallet";
 
@@ -60,7 +61,7 @@ export function useContributorProfile() {
     const load = async () => {
       setLoading(true);
       try {
-        const res = await fetch(`${API_BASE}/me?communityId=${COMMUNITY_ID}`, { headers: authHeaders() });
+        const res = await fetch(`${API_BASE}/me?communityId=${getStoredCommunityId()}`, { headers: authHeaders() });
         setProfile(res.ok ? await res.json() : null);
       } catch {
         setProfile(null);
@@ -71,9 +72,11 @@ export function useContributorProfile() {
     void load();
     window.addEventListener("shillops-ops", load);
     window.addEventListener("shillops-session", load);
+    window.addEventListener("shillops-community", load);
     return () => {
       window.removeEventListener("shillops-ops", load);
       window.removeEventListener("shillops-session", load);
+      window.removeEventListener("shillops-community", load);
     };
   }, [connected, wallet]);
 

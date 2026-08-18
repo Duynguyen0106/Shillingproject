@@ -6,12 +6,19 @@ const appUrl = process.env.APP_URL || "http://localhost:3000";
 async function main() {
   const community = await prisma.community.upsert({
     where: { id: "demo-community" },
-    update: {},
+    update: {
+      contractAddress: "0x6982508145454ce325ddbe47a25d4ec3d2311933",
+      chainId: "ethereum",
+      dexUrl: "https://dexscreener.com/ethereum/0x6982508145454ce325ddbe47a25d4ec3d2311933"
+    },
     create: {
       id: "demo-community",
       name: "Pepe Raiders",
       ticker: "PEPE",
-      description: "Demo memecoin community for mission ops"
+      description: "Demo memecoin community bound to the PEPE contract on Ethereum",
+      contractAddress: "0x6982508145454ce325ddbe47a25d4ec3d2311933",
+      chainId: "ethereum",
+      dexUrl: "https://dexscreener.com/ethereum/0x6982508145454ce325ddbe47a25d4ec3d2311933"
     }
   });
 
