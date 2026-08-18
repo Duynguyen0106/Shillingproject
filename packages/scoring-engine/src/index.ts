@@ -13,3 +13,7 @@ export function computeScore(input: ScoreInput): number {
   const spamPenalty = input.duplicatePenalty ? input.basePoints * 0.4 : 0;
   return Math.max(0, Math.floor((input.basePoints + earlyBonus + engagementBonus) * priorityMultiplier - spamPenalty));
 }
+
+export function scoreAttributedClick(input: { highPriority: boolean }): number {
+  return input.highPriority ? 2 : 1;
+}

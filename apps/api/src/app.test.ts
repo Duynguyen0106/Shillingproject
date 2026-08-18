@@ -1,7 +1,7 @@
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 import { ActionType, Priority, SignalType } from "@prisma/client";
-import { createApp, scoreSubmission, buildMissionAlertMessage } from "./app";
+import { createApp, scoreSubmission, buildMissionAlertMessage, buildShareCopy } from "./app";
 
 describe("API validation and health", () => {
   const app = createApp({} as never);
@@ -154,6 +154,18 @@ describe("scoring and alerts", () => {
     });
     expect(spike).toContain("Mention spike: PEPE up 42%");
   });
+
+  it("builds social share copy with the CTA", () => {
+    const copy = buildShareCopy({
+      title: "Spike response",
+      signalType: SignalType.MENTION_SPIKE,
+      metadata: { ticker: "PEPE" },
+      ctaUrl: "http://localhost:4000/r/raidcta1"
+    });
+    expect(copy.x).toContain("PEPE mentions are spiking");
+    expect(copy.x).toContain("/r/raidcta1");
+    expect(copy.telegram).toContain("CTA:");
+  });
 });
 
 describe("attribution tracking", () => {
@@ -173,6 +185,62 @@ describe("attribution tracking", () => {
     expect(res.status).toBe(302);
     expect(res.headers.location).toBe("https://example.com/mission");
     expect(createClick).toHaveBeenCalledTimes(1);
+  });
+
+  it("awards points for a unique click on a contributor CTA", async () => {
+    const createClick = vi.fn().mockResolvedValue({});
+    const createScore = vi.fn().mockResolvedValue({});
+    const createEngagement = vi.fn().mockResolvedValue({});
+    const app = createApp({
+      shortLink: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "link-1",
+          code: "raidcta1",
+          targetUrl: "https://example.com/mission",
+          userId: "user-1",
+          communityId: "demo-community",
+          mission: { status: "ACTIVE", priority: Priority.HIGH }
+        })
+      },
+      shortLinkClick: { create: createClick, findFirst: vi.fn().mockResolvedValue(null) },
+      score: {
+        aggregate: vi.fn().mockResolvedValue({ _sum: { points: 0 } }),
+        create: createScore
+      },
+      engagementEvent: { create: createEngagement }
+    } as never);
+
+    const res = await request(app).get("/r/raidcta1").set("User-Agent", "vitest");
+    expect(res.status).toBe(302);
+    expect(createScore).toHaveBeenCalledTimes(1);
+    expect(createScore.mock.calls[0][0].data.points).toBe(2);
+    expect(createScore.mock.calls[0][0].data.userId).toBe("user-1");
+    expect(createEngagement).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not award points for a duplicate click fingerprint", async () => {
+    const createScore = vi.fn();
+    const app = createApp({
+      shortLink: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "link-1",
+          code: "raidcta1",
+          targetUrl: "https://example.com/mission",
+          userId: "user-1",
+          communityId: "demo-community",
+          mission: { status: "ACTIVE", priority: Priority.HIGH }
+        })
+      },
+      shortLinkClick: {
+        create: vi.fn().mockResolvedValue({}),
+        findFirst: vi.fn().mockResolvedValue({ id: "click-1" })
+      },
+      score: { create: createScore }
+    } as never);
+
+    const res = await request(app).get("/r/raidcta1");
+    expect(res.status).toBe(302);
+    expect(createScore).not.toHaveBeenCalled();
   });
 
   it("returns attribution click counts", async () => {

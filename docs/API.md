@@ -26,7 +26,7 @@
 
 ## Attribution
 - POST `/links`
-- GET `/r/:code` (redirect + click logging)
+- GET `/r/:code` (redirect + click logging; unique contributor CTA clicks award points)
 - GET `/communities/:id/attribution` — click counts, optional `wallet` when the link is a contributor CTA
 
 ## Notifications

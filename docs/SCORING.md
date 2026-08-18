@@ -10,3 +10,5 @@ Defaults:
 - early (<10 min) = +30%
 - high priority = x1.5
 - duplicate penalty = -40%
+- attributed CTA click = 1 pt (2 pts if the mission is HIGH)
+- unique click fingerprint (IP + user agent), 25 pts cap per link per UTC day

@@ -54,6 +54,7 @@ export default function MyOpsPage() {
           <strong>{profile?.clicks ?? 0}</strong>
         </div>
       </div>
+      <p className="muted">Unique clicks on your personal CTA award 1 pt, or 2 pts on HIGH missions (25/day cap).</p>
       <p>
         <Link href="/app/leaderboard">Open leaderboard</Link>
       </p>

@@ -1,8 +1,9 @@
+import { createHash } from "crypto";
 import express, { NextFunction, Request, Response } from "express";
 import cors from "cors";
 import { nanoid } from "nanoid";
 import { Prisma, PrismaClient, ActionType, MissionStatus, Platform, Priority, SignalType } from "@prisma/client";
-import { computeScore } from "@shillops/scoring-engine";
+import { computeScore, scoreAttributedClick } from "@shillops/scoring-engine";
 import { getAddress, isAddress, verifyMessage } from "viem";
 import type { Address, Hex } from "viem";
 import { z } from "zod";
@@ -107,6 +108,32 @@ export function scoreSubmission(input: { actionType: ActionType; priority: Prior
     highPriority: input.priority === Priority.HIGH,
     duplicatePenalty: input.duplicatePenalty
   });
+}
+
+const CLICK_POINTS_CAP_PER_LINK_PER_DAY = 25;
+
+export function hashClickFingerprint(ip: string, userAgent: string): string {
+  return createHash("sha256").update(`${ip}|${userAgent}`).digest("hex").slice(0, 32);
+}
+
+export function buildShareCopy(input: {
+  title: string;
+  signalType?: SignalType | string;
+  metadata?: Record<string, unknown>;
+  ctaUrl: string;
+}): { x: string; telegram: string; discord: string } {
+  const ticker = String(input.metadata?.ticker ?? input.metadata?.token ?? "the ticker");
+  const headline =
+    input.signalType === SignalType.WHALE_BUY || input.signalType === "WHALE_BUY"
+      ? `Whale buy on ${ticker}. Push the narrative.`
+      : input.signalType === SignalType.MENTION_SPIKE || input.signalType === "MENTION_SPIKE"
+        ? `${ticker} mentions are spiking. Boost now.`
+        : `Mission live: ${input.title}`;
+  return {
+    x: `${headline}\n${input.ctaUrl}`,
+    telegram: `${headline}\nCTA: ${input.ctaUrl}`,
+    discord: `**${headline}**\n${input.ctaUrl}`
+  };
 }
 
 async function sendWebhookMessage(url: string | undefined, message: string): Promise<boolean> {
@@ -603,11 +630,51 @@ export function createApp(prisma: PrismaClient) {
   }));
 
   app.get("/r/:code", asyncRoute(async (req, res) => {
-    const link = await prisma.shortLink.findUnique({ where: { code: req.params.code } });
-    if (!link) return res.status(404).send("Not found");
-    await prisma.shortLinkClick.create({
-      data: { shortLinkId: link.id, referrer: req.get("referer"), userAgent: req.get("user-agent") }
+    const link = await prisma.shortLink.findUnique({
+      where: { code: req.params.code },
+      include: { mission: { select: { status: true, priority: true } } }
     });
+    if (!link) return res.status(404).send("Not found");
+    const forwarded = req.get("x-forwarded-for")?.split(",")[0]?.trim();
+    const ip = forwarded || req.ip || "unknown";
+    const userAgent = req.get("user-agent") || "";
+    const ipHash = hashClickFingerprint(ip, userAgent);
+
+    const duplicate = link.userId
+      ? await prisma.shortLinkClick.findFirst({ where: { shortLinkId: link.id, ipHash } })
+      : null;
+
+    await prisma.shortLinkClick.create({
+      data: { shortLinkId: link.id, referrer: req.get("referer"), userAgent, ipHash }
+    });
+
+    if (link.userId && !duplicate && link.mission?.status !== MissionStatus.COMPLETED) {
+      const dayStart = new Date();
+      dayStart.setUTCHours(0, 0, 0, 0);
+      const awardedToday = await prisma.score.aggregate({
+        where: {
+          userId: link.userId,
+          sourceId: link.id,
+          createdAt: { gte: dayStart }
+        },
+        _sum: { points: true }
+      });
+      if ((awardedToday._sum.points ?? 0) < CLICK_POINTS_CAP_PER_LINK_PER_DAY) {
+        const points = scoreAttributedClick({ highPriority: link.mission?.priority === Priority.HIGH });
+        await prisma.score.create({
+          data: {
+            userId: link.userId,
+            communityId: link.communityId,
+            points,
+            reason: `CTA click ${link.code}`,
+            sourceId: link.id
+          }
+        });
+        await prisma.engagementEvent.create({
+          data: { type: "CLICK", value: 1 }
+        });
+      }
+    }
     res.redirect(link.targetUrl);
   }));
 

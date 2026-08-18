@@ -37,6 +37,9 @@ async function main() {
   });
   if (!claimed?.shortLink?.code) throw new Error("Claim did not return a personal tracked CTA");
 
+  const click = await fetch(`${API_BASE}/r/${claimed.shortLink.code}`, { redirect: "manual" });
+  if (click.status !== 302) throw new Error(`Personal CTA click failed: ${click.status}`);
+
   await post(`/tasks/${taskId}/submissions`, {
     wallet: "0xsmoke0001",
     proofUrl: "https://x.com/example/smoke",
@@ -66,7 +69,8 @@ async function main() {
         attributionCount: attribution.length,
         myPoints: me.points,
         myRank: me.rank,
-        myClicks: me.clicks
+        myClicks: me.clicks,
+        clickRedirect: click.status
       },
       null,
       2

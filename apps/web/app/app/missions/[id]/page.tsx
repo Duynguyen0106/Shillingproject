@@ -2,6 +2,7 @@ import { apiGet } from "../../../../lib/api";
 import ClaimButton from "./ClaimButton";
 import CompleteMissionButton from "./CompleteMissionButton";
 import SubmissionForm from "./SubmissionForm";
+import ShareKit from "../../../ShareKit";
 
 type Submission = {
   id: string;
@@ -38,7 +39,7 @@ type Mission = {
   urgency: number;
   status: string;
   tasks: Task[];
-  signal?: { type: string; severity: number } | null;
+  signal?: { type: string; severity: number; metadata?: Record<string, unknown> | null } | null;
   shortLinks?: ShortLink[];
   claims?: Claim[];
   claimsCount?: number;
@@ -72,6 +73,13 @@ export default async function MissionDetailsPage({ params }: { params: { id: str
         </div>
       )}
       <ClaimButton missionId={mission.id} />
+      <ShareKit
+        missionId={mission.id}
+        title={mission.title}
+        signalType={mission.signal?.type}
+        metadata={(mission.signal?.metadata ?? undefined) as Record<string, unknown> | undefined}
+        communityCode={tracked?.code}
+      />
       <CompleteMissionButton missionId={mission.id} status={mission.status} />
       {mission.tasks.map((task) => (
         <div key={task.id} className="card">
