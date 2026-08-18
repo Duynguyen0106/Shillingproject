@@ -23,8 +23,9 @@
    - `docker compose -f infra/docker-compose.yml up -d`
 2. Install dependencies:
    - `npm install`
-3. Configure API environment:
+3. Configure environment:
    - `cp apps/api/.env.example apps/api/.env`
+   - `cp apps/web/.env.example apps/web/.env.local`
 4. Generate Prisma client + migrate + seed:
    - `npm run prisma:generate`
    - `npm run prisma:migrate`

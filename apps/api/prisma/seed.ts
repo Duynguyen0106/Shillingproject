@@ -1,6 +1,7 @@
 import { PrismaClient, ActionType, Platform, Priority, SignalType } from "@prisma/client";
 
 const prisma = new PrismaClient();
+const appUrl = process.env.APP_URL || "http://localhost:3000";
 
 async function main() {
   const community = await prisma.community.upsert({
@@ -12,6 +13,18 @@ async function main() {
       ticker: "PEPE",
       description: "Demo memecoin community for mission ops"
     }
+  });
+
+  const user = await prisma.user.upsert({
+    where: { wallet: "0xdemo" },
+    update: { displayName: "Raider" },
+    create: { wallet: "0xdemo", displayName: "Raider" }
+  });
+
+  await prisma.communityMember.upsert({
+    where: { userId_communityId: { userId: user.id, communityId: community.id } },
+    update: {},
+    create: { userId: user.id, communityId: community.id, role: "lead" }
   });
 
   const signal = await prisma.signal.upsert({
@@ -27,7 +40,7 @@ async function main() {
     }
   });
 
-  await prisma.mission.upsert({
+  const mission = await prisma.mission.upsert({
     where: { signalId: signal.id },
     update: {},
     create: {
@@ -55,6 +68,24 @@ async function main() {
       }
     }
   });
+
+  await prisma.missionClaim.upsert({
+    where: { missionId_userId: { missionId: mission.id, userId: user.id } },
+    update: {},
+    create: { missionId: mission.id, userId: user.id }
+  });
+
+  const existingLink = await prisma.shortLink.findFirst({ where: { missionId: mission.id } });
+  if (!existingLink) {
+    await prisma.shortLink.create({
+      data: {
+        communityId: community.id,
+        missionId: mission.id,
+        code: "democta1",
+        targetUrl: `${appUrl}/app/missions/${mission.id}`
+      }
+    });
+  }
 }
 
 main()

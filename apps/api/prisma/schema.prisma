@@ -48,6 +48,7 @@ model User {
   memberships  CommunityMember[]
   submissions  Submission[]
   scores       Score[]
+  claims       MissionClaim[]
 }
 
 model Community {
@@ -105,6 +106,18 @@ model Mission {
   signal        Signal?       @relation(fields: [signalId], references: [id], onDelete: SetNull)
   tasks         MissionTask[]
   shortLinks    ShortLink[]
+  claims        MissionClaim[]
+}
+
+model MissionClaim {
+  id        String   @id @default(cuid())
+  missionId String
+  userId    String
+  claimedAt DateTime @default(now())
+  mission   Mission  @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([missionId, userId])
 }
 
 model MissionTask {

@@ -44,12 +44,15 @@ describe("signal to mission flow", () => {
     const createMission = vi.fn().mockResolvedValue({
       id: "mission-1",
       title: "MENTION SPIKE response",
-      priority: Priority.HIGH
+      priority: Priority.HIGH,
+      shortLinks: []
     });
+    const createLink = vi.fn().mockResolvedValue({ id: "link-1", code: "cta12345" });
 
     const app = createApp({
       signal: { upsert: upsertSignal },
-      mission: { findFirst: findMission, create: createMission }
+      mission: { findFirst: findMission, create: createMission },
+      shortLink: { create: createLink }
     } as never);
 
     const res = await request(app).post("/signals/ingest").send({
@@ -62,6 +65,7 @@ describe("signal to mission flow", () => {
 
     expect(res.status).toBe(200);
     expect(createMission).toHaveBeenCalledTimes(1);
+    expect(createLink).toHaveBeenCalledTimes(1);
     expect(res.body.mission.id).toBe("mission-1");
   });
 
@@ -181,7 +185,7 @@ describe("attribution tracking", () => {
 
     const res = await request(app).get("/communities/demo-community/attribution");
     expect(res.status).toBe(200);
-    expect(res.body[0]).toEqual({ code: "abc12345", targetUrl: "https://example.com", clicks: 3 });
+    expect(res.body[0]).toEqual({ code: "abc12345", targetUrl: "https://example.com", clicks: 3, missionId: undefined });
   });
 });
 
@@ -198,12 +202,17 @@ describe("submissions", () => {
     });
     const createSubmission = vi.fn().mockResolvedValue({ id: "sub-1", pointsAwarded: 18 });
     const createScore = vi.fn().mockResolvedValue({});
+    const createEngagement = vi.fn().mockResolvedValue({});
+    const groupBy = vi.fn().mockResolvedValue([{ userId: "user-1", _sum: { points: 18 } }]);
+    const createSnapshot = vi.fn().mockResolvedValue({});
 
     const app = createApp({
       user: { findUnique: findUser, create: createUser },
       missionTask: { findUnique: findTask },
       submission: { create: createSubmission },
-      score: { create: createScore }
+      score: { create: createScore, groupBy },
+      engagementEvent: { create: createEngagement },
+      leaderboardSnapshot: { create: createSnapshot }
     } as never);
 
     const res = await request(app).post("/tasks/task-1/submissions").send({
@@ -217,5 +226,25 @@ describe("submissions", () => {
     expect(createSubmission).toHaveBeenCalledTimes(1);
     expect(createScore).toHaveBeenCalledTimes(1);
     expect(createScore.mock.calls[0][0].data.communityId).toBe("demo-community");
+    expect(createEngagement).toHaveBeenCalledTimes(1);
+    expect(createSnapshot).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("mission claims", () => {
+  it("persists a claim for a wallet", async () => {
+    const findUser = vi.fn().mockResolvedValue({ id: "user-1", wallet: "0xdemo" });
+    const findMission = vi.fn().mockResolvedValue({ id: "mission-1" });
+    const upsertClaim = vi.fn().mockResolvedValue({ id: "claim-1", missionId: "mission-1", userId: "user-1" });
+    const app = createApp({
+      user: { findUnique: findUser },
+      mission: { findUnique: findMission },
+      missionClaim: { upsert: upsertClaim }
+    } as never);
+
+    const res = await request(app).post("/missions/mission-1/claim").send({ wallet: "0xdemo" });
+    expect(res.status).toBe(200);
+    expect(res.body.claimed).toBe(true);
+    expect(upsertClaim).toHaveBeenCalledTimes(1);
   });
 });

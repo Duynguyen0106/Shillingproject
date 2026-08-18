@@ -11,7 +11,11 @@
     "prisma:migrate": "prisma migrate dev --name init",
     "prisma:seed": "tsx prisma/seed.ts"
   },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
   "dependencies": {
+    "@shillops/scoring-engine": "*",
     "@prisma/client": "^6.14.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.1",

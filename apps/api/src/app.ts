@@ -2,9 +2,11 @@ import express, { NextFunction, Request, Response } from "express";
 import cors from "cors";
 import { nanoid } from "nanoid";
 import { Prisma, PrismaClient, ActionType, MissionStatus, Platform, Priority, SignalType } from "@prisma/client";
+import { computeScore } from "@shillops/scoring-engine";
 import { z } from "zod";
 
 const appUrl = process.env.APP_URL || "http://localhost:3000";
+const sessions = new Map<string, { wallet: string }>();
 
 const actionBasePoints: Record<ActionType, number> = {
   REPLY: 10,
@@ -50,13 +52,24 @@ const createLinkSchema = z.object({
   targetUrl: z.string().url()
 });
 
+const claimSchema = z.object({
+  wallet: z.string().min(3)
+});
+
+function priorityFromSeverity(severity: number): Priority {
+  if (severity >= 80) return Priority.HIGH;
+  if (severity >= 50) return Priority.MEDIUM;
+  return Priority.LOW;
+}
+
 export function scoreSubmission(input: { actionType: ActionType; priority: Priority; isEarly: boolean; duplicatePenalty: boolean; engagementValue: number }): number {
-  const base = actionBasePoints[input.actionType] ?? 5;
-  const earlyBonus = input.isEarly ? base * 0.3 : 0;
-  const engagementBonus = Math.min(20, Math.floor(input.engagementValue / 10));
-  const priorityMultiplier = input.priority === Priority.HIGH ? 1.5 : 1;
-  const spamPenalty = input.duplicatePenalty ? base * 0.4 : 0;
-  return Math.max(0, Math.floor((base + earlyBonus + engagementBonus) * priorityMultiplier - spamPenalty));
+  return computeScore({
+    basePoints: actionBasePoints[input.actionType] ?? 5,
+    isEarly: input.isEarly,
+    engagementValue: input.engagementValue,
+    highPriority: input.priority === Priority.HIGH,
+    duplicatePenalty: input.duplicatePenalty
+  });
 }
 
 async function sendWebhookMessage(url: string | undefined, message: string) {
@@ -107,6 +120,43 @@ async function notifyMissionCreated(
   ]);
 }
 
+async function createTrackedLink(prisma: PrismaClient, communityId: string, missionId: string) {
+  return prisma.shortLink.create({
+    data: {
+      communityId,
+      missionId,
+      targetUrl: `${appUrl}/app/missions/${missionId}`,
+      code: nanoid(8)
+    }
+  });
+}
+
+async function createMissionFromSignal(
+  prisma: PrismaClient,
+  signal: { id: string; communityId: string; type: SignalType; severity: number; metadata: Prisma.JsonValue | null }
+) {
+  const mission = await prisma.mission.create({
+    data: {
+      communityId: signal.communityId,
+      signalId: signal.id,
+      title: `${signal.type.replaceAll("_", " ")} response`,
+      description: `Auto-created mission from ${signal.type} signal`,
+      priority: priorityFromSeverity(signal.severity),
+      urgency: signal.severity,
+      tasks: {
+        create: [
+          { title: "Reply with narrative", actionType: ActionType.REPLY, platform: Platform.X, basePoints: 10 },
+          { title: "Share in Telegram", actionType: ActionType.SHARE, platform: Platform.TELEGRAM, basePoints: 6 }
+        ]
+      }
+    },
+    include: { tasks: true, shortLinks: true }
+  });
+  const shortLink = await createTrackedLink(prisma, signal.communityId, mission.id);
+  await notifyMissionCreated(mission.id, mission.title, signal.type, mission.priority, signal.metadata as Prisma.JsonValue | undefined);
+  return { ...mission, shortLinks: [...(mission.shortLinks ?? []), shortLink] };
+}
+
 function asyncRoute<T extends Request>(fn: (req: T, res: Response, next: NextFunction) => Promise<unknown>) {
   return (req: Request, res: Response, next: NextFunction) => {
     void fn(req as T, res, next).catch(next);
@@ -121,18 +171,22 @@ export function createApp(prisma: PrismaClient) {
   app.get("/health", (_req, res) => res.json({ ok: true }));
 
   app.post("/auth/siwe/start", asyncRoute(async (_req, res) => {
-    res.json({ nonce: nanoid(16), message: "Sign this SIWE message" });
+    res.json({ nonce: nanoid(16), message: "Sign this SIWE message to join Shill Ops" });
   }));
 
   app.post("/auth/siwe/verify", asyncRoute(async (req, res) => {
-    const { wallet } = siweVerifySchema.parse(req.body);
+    const { wallet, displayName } = siweVerifySchema.parse(req.body);
     let user = await prisma.user.findUnique({ where: { wallet } });
-    if (!user) user = await prisma.user.create({ data: { wallet } });
-    res.json({ token: nanoid(24), user });
+    if (!user) user = await prisma.user.create({ data: { wallet, displayName } });
+    const token = nanoid(24);
+    sessions.set(token, { wallet });
+    res.json({ token, user });
   }));
 
   app.get("/me", asyncRoute(async (req, res) => {
-    const wallet = String(req.query.wallet || "");
+    const auth = req.get("authorization")?.replace("Bearer ", "");
+    const wallet = auth ? sessions.get(auth)?.wallet : String(req.query.wallet || "");
+    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
     const user = await prisma.user.findUnique({ where: { wallet } });
     if (!user) return res.status(404).json({ error: "User not found" });
     res.json(user);
@@ -172,26 +226,12 @@ export function createApp(prisma: PrismaClient) {
       create: { communityId, type, severity, sourceRef, metadata: safeMetadata, dedupeKey }
     });
 
-    let mission = await prisma.mission.findFirst({ where: { signalId: signal.id } });
+    let mission = await prisma.mission.findFirst({
+      where: { signalId: signal.id },
+      include: { tasks: true, shortLinks: true }
+    });
     if (!mission) {
-      mission = await prisma.mission.create({
-        data: {
-          communityId,
-          signalId: signal.id,
-          title: `${type.replaceAll("_", " ")} response`,
-          description: `Auto-created mission from ${type} signal`,
-          priority: severity >= 80 ? Priority.HIGH : severity >= 50 ? Priority.MEDIUM : Priority.LOW,
-          urgency: severity,
-          tasks: {
-            create: [
-              { title: "Reply with narrative", actionType: ActionType.REPLY, platform: Platform.X, basePoints: 10 },
-              { title: "Share in Telegram", actionType: ActionType.SHARE, platform: Platform.TELEGRAM, basePoints: 6 }
-            ]
-          }
-        },
-        include: { tasks: true }
-      });
-      await notifyMissionCreated(mission.id, mission.title, signal.type, mission.priority, signal.metadata as Prisma.JsonValue | undefined);
+      mission = await createMissionFromSignal(prisma, signal);
     }
     res.json({ signal, mission });
   }));
@@ -205,7 +245,7 @@ export function createApp(prisma: PrismaClient) {
     const status = (req.query.status as string | undefined)?.toUpperCase();
     const missions = await prisma.mission.findMany({
       where: { communityId: req.params.id, status: status ? (status as MissionStatus) : MissionStatus.ACTIVE },
-      include: { tasks: true },
+      include: { tasks: true, shortLinks: true },
       orderBy: { createdAt: "desc" }
     });
     res.json(missions);
@@ -214,30 +254,37 @@ export function createApp(prisma: PrismaClient) {
   app.post("/signals/:id/create-mission", asyncRoute(async (req, res) => {
     const signal = await prisma.signal.findUnique({ where: { id: req.params.id } });
     if (!signal) return res.status(404).json({ error: "Signal not found" });
-    let mission = await prisma.mission.findFirst({ where: { signalId: signal.id } });
+    let mission = await prisma.mission.findFirst({
+      where: { signalId: signal.id },
+      include: { tasks: true, shortLinks: true }
+    });
     if (!mission) {
-      mission = await prisma.mission.create({
-        data: {
-          communityId: signal.communityId,
-          signalId: signal.id,
-          title: `${signal.type.replaceAll("_", " ")} response`,
-          description: "Internal mission creation from signal",
-          priority: signal.severity >= 80 ? Priority.HIGH : signal.severity >= 50 ? Priority.MEDIUM : Priority.LOW,
-          urgency: signal.severity
-        }
-      });
+      mission = await createMissionFromSignal(prisma, signal);
     }
     res.json(mission);
   }));
 
   app.get("/missions/:id", asyncRoute(async (req, res) => {
-    const mission = await prisma.mission.findUnique({ where: { id: req.params.id }, include: { tasks: true, signal: true } });
+    const mission = await prisma.mission.findUnique({
+      where: { id: req.params.id },
+      include: { tasks: true, signal: true, shortLinks: true, claims: true }
+    });
     if (!mission) return res.status(404).json({ error: "Mission not found" });
     res.json(mission);
   }));
 
   app.post("/missions/:id/claim", asyncRoute(async (req, res) => {
-    res.json({ missionId: req.params.id, claimed: true });
+    const { wallet } = claimSchema.parse(req.body);
+    let user = await prisma.user.findUnique({ where: { wallet } });
+    if (!user) user = await prisma.user.create({ data: { wallet } });
+    const mission = await prisma.mission.findUnique({ where: { id: req.params.id } });
+    if (!mission) return res.status(404).json({ error: "Mission not found" });
+    const claim = await prisma.missionClaim.upsert({
+      where: { missionId_userId: { missionId: mission.id, userId: user.id } },
+      update: {},
+      create: { missionId: mission.id, userId: user.id }
+    });
+    res.json({ missionId: mission.id, claimed: true, claim });
   }));
 
   app.post("/missions/:id/complete", asyncRoute(async (req, res) => {
@@ -261,6 +308,21 @@ export function createApp(prisma: PrismaClient) {
 
     await prisma.score.create({
       data: { userId: user.id, communityId: task.mission.communityId, points, reason: `Submission for ${task.title}`, sourceId: submission.id }
+    });
+
+    await prisma.engagementEvent.create({
+      data: { submissionId: submission.id, type: "SUBMISSION", value: engagementValue }
+    });
+
+    const rows = await prisma.score.groupBy({
+      by: ["userId"],
+      where: { communityId: task.mission.communityId },
+      _sum: { points: true },
+      orderBy: { _sum: { points: "desc" } },
+      take: 50
+    });
+    await prisma.leaderboardSnapshot.create({
+      data: { communityId: task.mission.communityId, payload: rows as Prisma.InputJsonValue }
     });
 
     res.json(submission);
@@ -315,7 +377,7 @@ export function createApp(prisma: PrismaClient) {
       include: { _count: { select: { clicks: true } } },
       orderBy: { createdAt: "desc" }
     });
-    res.json(links.map((l) => ({ code: l.code, targetUrl: l.targetUrl, clicks: l._count.clicks })));
+    res.json(links.map((l) => ({ code: l.code, targetUrl: l.targetUrl, clicks: l._count.clicks, missionId: l.missionId })));
   }));
 
   app.post("/notifications/telegram/test", asyncRoute(async (_req, res) => {
@@ -337,4 +399,3 @@ export function createApp(prisma: PrismaClient) {
 
   return app;
 }
-

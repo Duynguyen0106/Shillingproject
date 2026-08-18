@@ -1,4 +1,5 @@
 import { apiGet } from "../../../../lib/api";
+import ClaimButton from "./ClaimButton";
 import SubmissionForm from "./SubmissionForm";
 
 type Task = {
@@ -7,6 +8,11 @@ type Task = {
   actionType: string;
   platform: string;
   basePoints: number;
+};
+
+type ShortLink = {
+  code: string;
+  targetUrl: string;
 };
 
 type Mission = {
@@ -18,10 +24,15 @@ type Mission = {
   status: string;
   tasks: Task[];
   signal?: { type: string; severity: number } | null;
+  shortLinks?: ShortLink[];
+  claims?: { id: string }[];
 };
+
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:4000";
 
 export default async function MissionDetailsPage({ params }: { params: { id: string } }) {
   const mission = await apiGet<Mission>(`/missions/${params.id}`);
+  const tracked = mission.shortLinks?.[0];
   return (
     <main className="container">
       <h1>{mission.title}</h1>
@@ -31,7 +42,19 @@ export default async function MissionDetailsPage({ params }: { params: { id: str
         <span>Urgency: {mission.urgency}</span>
         <span>Status: {mission.status}</span>
         {mission.signal && <span>Signal: {mission.signal.type}</span>}
+        <span>Claims: {mission.claims?.length ?? 0}</span>
       </div>
+      {tracked && (
+        <div className="card">
+          <strong>Tracked CTA</strong>
+          <p>
+            <a href={`${API_BASE}/r/${tracked.code}`} target="_blank" rel="noreferrer">
+              {API_BASE}/r/{tracked.code}
+            </a>
+          </p>
+        </div>
+      )}
+      <ClaimButton missionId={mission.id} />
       {mission.tasks.map((task) => (
         <div key={task.id} className="card">
           <h3>{task.title}</h3>
