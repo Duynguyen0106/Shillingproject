@@ -65,16 +65,25 @@ const claimSchema = z.object({
   wallet: z.string().min(3).optional()
 });
 
+function siweDomain(uri: string): string {
+  try {
+    return new URL(uri).host || "localhost";
+  } catch {
+    return "localhost";
+  }
+}
+
 export function buildSiweMessage(input: { address: string; nonce: string; uri?: string; issuedAt?: string }): string {
   const issuedAt = input.issuedAt ?? new Date().toISOString();
   const checksum = getAddress(input.address);
+  const uri = input.uri ?? appUrl;
   return [
-    "localhost wants you to sign in with your Ethereum account:",
+    `${siweDomain(uri)} wants you to sign in with your Ethereum account:`,
     checksum,
     "",
     "Sign in to Shill Ops.",
     "",
-    `URI: ${input.uri ?? appUrl}`,
+    `URI: ${uri}`,
     "Version: 1",
     "Chain ID: 1",
     `Nonce: ${input.nonce}`,
@@ -108,6 +117,42 @@ export function scoreSubmission(input: { actionType: ActionType; priority: Prior
     highPriority: input.priority === Priority.HIGH,
     duplicatePenalty: input.duplicatePenalty
   });
+}
+
+export function missionTtlMs(priority: Priority): number {
+  if (priority === Priority.HIGH) return 2 * 60 * 60 * 1000;
+  if (priority === Priority.MEDIUM) return 6 * 60 * 60 * 1000;
+  return 24 * 60 * 60 * 1000;
+}
+
+export function missionExpiresAt(createdAt: Date, priority: Priority): Date {
+  return new Date(createdAt.getTime() + missionTtlMs(priority));
+}
+
+function isMissionStale(mission: { status?: string; createdAt?: Date; priority?: Priority }): boolean {
+  if (mission.status === MissionStatus.EXPIRED || mission.status === MissionStatus.COMPLETED) return true;
+  if (!mission.createdAt || !mission.priority) return false;
+  return Date.now() > missionExpiresAt(mission.createdAt, mission.priority).getTime();
+}
+
+export function missionClosedReason(mission: { status?: string; createdAt?: Date; priority?: Priority }): string | null {
+  if (mission.status === MissionStatus.COMPLETED) return "Mission is completed";
+  if (mission.status === MissionStatus.EXPIRED || isMissionStale(mission)) return "Mission has expired";
+  return null;
+}
+
+function withExpiryFields(mission: { createdAt?: Date; priority?: Priority; status?: MissionStatus }) {
+  if (!mission.createdAt || !mission.priority) {
+    return { expiresAt: null as string | null, remainingMs: null as number | null };
+  }
+  const expiresAt = missionExpiresAt(mission.createdAt, mission.priority);
+  const remainingMs = mission.status === MissionStatus.ACTIVE
+    ? Math.max(0, expiresAt.getTime() - Date.now())
+    : 0;
+  return {
+    expiresAt: expiresAt.toISOString(),
+    remainingMs
+  };
 }
 
 const CLICK_POINTS_CAP_PER_LINK_PER_DAY = 25;
@@ -210,6 +255,17 @@ async function notifyMissionCreated(
 ) {
   const baseMsg = buildMissionAlertMessage({ missionId, title, signalType, priority, metadata });
   await dispatchAlert(baseMsg);
+}
+
+async function persistExpiredMissions(prisma: PrismaClient, communityId: string) {
+  const active = await prisma.mission.findMany({
+    where: { communityId, status: MissionStatus.ACTIVE },
+    select: { id: true, createdAt: true, priority: true, status: true }
+  });
+  const ids = active.filter((mission) => isMissionStale(mission)).map((mission) => mission.id);
+  if (ids.length === 0) return ids;
+  await prisma.mission.updateMany({ where: { id: { in: ids } }, data: { status: MissionStatus.EXPIRED } });
+  return ids;
 }
 
 async function createTrackedLink(prisma: PrismaClient, communityId: string, missionId: string, userId?: string) {
@@ -473,6 +529,7 @@ export function createApp(prisma: PrismaClient) {
   }));
 
   app.get("/communities/:id/missions", asyncRoute(async (req, res) => {
+    await persistExpiredMissions(prisma, req.params.id);
     const status = (req.query.status as string | undefined)?.toUpperCase();
     const missions = await prisma.mission.findMany({
       where: { communityId: req.params.id, status: status ? (status as MissionStatus) : MissionStatus.ACTIVE },
@@ -486,8 +543,67 @@ export function createApp(prisma: PrismaClient) {
     res.json(missions.map((mission) => ({
       ...mission,
       claimsCount: mission._count.claims,
-      shortLinks: serializeShortLinks(mission.shortLinks)
+      shortLinks: serializeShortLinks(mission.shortLinks),
+      ...withExpiryFields(mission)
     })));
+  }));
+
+  app.get("/communities/:id/activity", asyncRoute(async (req, res) => {
+    const [claims, submissions, clickScores] = await Promise.all([
+      prisma.missionClaim.findMany({
+        where: { mission: { communityId: req.params.id } },
+        include: {
+          user: { select: { wallet: true, displayName: true } },
+          mission: { select: { title: true } }
+        },
+        orderBy: { claimedAt: "desc" },
+        take: 20
+      }),
+      prisma.submission.findMany({
+        where: { task: { mission: { communityId: req.params.id } } },
+        include: {
+          user: { select: { wallet: true, displayName: true } },
+          task: { select: { title: true, mission: { select: { title: true } } } }
+        },
+        orderBy: { submittedAt: "desc" },
+        take: 20
+      }),
+      prisma.score.findMany({
+        where: { communityId: req.params.id, reason: { startsWith: "CTA click" } },
+        include: { user: { select: { wallet: true, displayName: true } } },
+        orderBy: { createdAt: "desc" },
+        take: 20
+      })
+    ]);
+    const events = [
+      ...claims.map((claim) => ({
+        type: "CLAIM" as const,
+        at: claim.claimedAt,
+        wallet: claim.user.wallet,
+        displayName: claim.user.displayName,
+        title: claim.mission.title,
+        points: null as number | null
+      })),
+      ...submissions.map((submission) => ({
+        type: "SUBMISSION" as const,
+        at: submission.submittedAt,
+        wallet: submission.user.wallet,
+        displayName: submission.user.displayName,
+        title: `${submission.task.title} · ${submission.task.mission.title}`,
+        points: submission.pointsAwarded as number | null
+      })),
+      ...clickScores.map((score) => ({
+        type: "CLICK" as const,
+        at: score.createdAt,
+        wallet: score.user.wallet,
+        displayName: score.user.displayName,
+        title: score.reason,
+        points: score.points as number | null
+      }))
+    ]
+      .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
+      .slice(0, 20);
+    res.json(events);
   }));
 
   app.post("/signals/:id/create-mission", asyncRoute(async (req, res) => {
@@ -504,7 +620,7 @@ export function createApp(prisma: PrismaClient) {
   }));
 
   app.get("/missions/:id", asyncRoute(async (req, res) => {
-    const mission = await prisma.mission.findUnique({
+    let mission = await prisma.mission.findUnique({
       where: { id: req.params.id },
       include: {
         tasks: {
@@ -524,10 +640,15 @@ export function createApp(prisma: PrismaClient) {
       }
     });
     if (!mission) return res.status(404).json({ error: "Mission not found" });
+    if (mission.status === MissionStatus.ACTIVE && isMissionStale(mission)) {
+      await prisma.mission.update({ where: { id: mission.id }, data: { status: MissionStatus.EXPIRED } });
+      mission = { ...mission, status: MissionStatus.EXPIRED };
+    }
     res.json({
       ...mission,
       claimsCount: mission.claims.length,
-      shortLinks: serializeShortLinks(mission.shortLinks)
+      shortLinks: serializeShortLinks(mission.shortLinks),
+      ...withExpiryFields(mission)
     });
   }));
 
@@ -539,6 +660,11 @@ export function createApp(prisma: PrismaClient) {
     if (!user) user = await prisma.user.create({ data: { wallet } });
     const mission = await prisma.mission.findUnique({ where: { id: req.params.id } });
     if (!mission) return res.status(404).json({ error: "Mission not found" });
+    if (mission.status === MissionStatus.ACTIVE && isMissionStale(mission)) {
+      await prisma.mission.update({ where: { id: mission.id }, data: { status: MissionStatus.EXPIRED } });
+    }
+    const closed = missionClosedReason(mission);
+    if (closed) return res.status(409).json({ error: closed });
     const claim = await prisma.missionClaim.upsert({
       where: { missionId_userId: { missionId: mission.id, userId: user.id } },
       update: {},
@@ -549,8 +675,17 @@ export function createApp(prisma: PrismaClient) {
   }));
 
   app.post("/missions/:id/complete", asyncRoute(async (req, res) => {
-    const mission = await prisma.mission.update({ where: { id: req.params.id }, data: { status: MissionStatus.COMPLETED } });
-    res.json(mission);
+    const wallet = resolveActorWallet(req);
+    if (!wallet) return res.status(401).json({ error: "Connect a wallet and sign in first" });
+    const mission = await prisma.mission.findUnique({ where: { id: req.params.id } });
+    if (!mission) return res.status(404).json({ error: "Mission not found" });
+    if (mission.status === MissionStatus.ACTIVE && isMissionStale(mission)) {
+      await prisma.mission.update({ where: { id: mission.id }, data: { status: MissionStatus.EXPIRED } });
+    }
+    const closed = missionClosedReason(mission);
+    if (closed) return res.status(409).json({ error: closed });
+    const updated = await prisma.mission.update({ where: { id: req.params.id }, data: { status: MissionStatus.COMPLETED } });
+    res.json(updated);
   }));
 
   app.post("/tasks/:id/submissions", asyncRoute(async (req, res) => {
@@ -565,6 +700,11 @@ export function createApp(prisma: PrismaClient) {
       where: { missionId_userId: { missionId: task.missionId, userId: user.id } }
     });
     if (!claim) return res.status(403).json({ error: "Claim this mission before submitting proof" });
+    if (task.mission.status === MissionStatus.ACTIVE && isMissionStale(task.mission)) {
+      await prisma.mission.update({ where: { id: task.mission.id }, data: { status: MissionStatus.EXPIRED } });
+    }
+    const closed = missionClosedReason(task.mission);
+    if (closed) return res.status(409).json({ error: closed });
     const isEarly = Date.now() - task.createdAt.getTime() < 10 * 60 * 1000;
     const duplicatePenalty = Boolean(proofText && proofText.length > 0 && proofText.toLowerCase().includes("copy"));
     const points = scoreSubmission({ actionType: task.actionType, priority: task.mission.priority, isEarly, duplicatePenalty, engagementValue });
@@ -648,7 +788,7 @@ export function createApp(prisma: PrismaClient) {
       data: { shortLinkId: link.id, referrer: req.get("referer"), userAgent, ipHash }
     });
 
-    if (link.userId && !duplicate && link.mission?.status !== MissionStatus.COMPLETED) {
+    if (link.userId && !duplicate && link.mission?.status !== MissionStatus.COMPLETED && link.mission?.status !== MissionStatus.EXPIRED && !isMissionStale(link.mission ?? {})) {
       const dayStart = new Date();
       dayStart.setUTCHours(0, 0, 0, 0);
       const awardedToday = await prisma.score.aggregate({

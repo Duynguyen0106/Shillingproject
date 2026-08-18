@@ -14,10 +14,11 @@
 - POST `/signals/ingest`
 - GET `/communities/:id/signals`
 - POST `/signals/:id/create-mission`
-- GET `/communities/:id/missions?status=active`
+- GET `/communities/:id/missions?status=active` — expires stale missions (HIGH 2h, MEDIUM 6h, LOW 24h) then lists
+- GET `/communities/:id/activity` — recent claims, proofs, and CTA click rewards
 - GET `/missions/:id`
-- POST `/missions/:id/claim` `{ wallet? }` — SIWE Bearer token overrides body wallet; issues a personal tracked CTA
-- POST `/missions/:id/complete`
+- POST `/missions/:id/claim` `{ wallet? }` — SIWE Bearer token overrides body wallet; issues a personal tracked CTA; 409 if expired/completed
+- POST `/missions/:id/complete` — requires a connected wallet; 409 if expired/completed
 
 ## Submissions / Scoring
 - POST `/tasks/:id/submissions` `{ wallet?, proofUrl, proofText?, engagementValue? }` — Bearer token wallet wins over body; requires a mission claim first

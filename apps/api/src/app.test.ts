@@ -1,7 +1,7 @@
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 import { ActionType, Priority, SignalType } from "@prisma/client";
-import { createApp, scoreSubmission, buildMissionAlertMessage, buildShareCopy } from "./app";
+import { createApp, scoreSubmission, buildMissionAlertMessage, buildShareCopy, missionTtlMs } from "./app";
 
 describe("API validation and health", () => {
   const app = createApp({} as never);
@@ -519,5 +519,55 @@ describe("contributor profile", () => {
     expect(res.status).toBe(200);
     expect(res.body.claimsCount).toBe(1);
     expect(res.body.shortLinks[0].clicks).toBe(4);
+  });
+});
+
+describe("mission expiry and activity", () => {
+  it("uses a 2 hour TTL for high-priority missions", () => {
+    expect(missionTtlMs(Priority.HIGH)).toBe(2 * 60 * 60 * 1000);
+    expect(missionTtlMs(Priority.LOW)).toBe(24 * 60 * 60 * 1000);
+  });
+
+  it("expires stale active missions when listing the board", async () => {
+    const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
+    const findMany = vi.fn()
+      .mockResolvedValueOnce([{ id: "m-old", createdAt: old, priority: Priority.HIGH, status: "ACTIVE" }])
+      .mockResolvedValueOnce([]);
+    const updateMany = vi.fn().mockResolvedValue({ count: 1 });
+    const app = createApp({
+      mission: { findMany, updateMany }
+    } as never);
+
+    const res = await request(app).get("/communities/demo-community/missions?status=active");
+    expect(res.status).toBe(200);
+    expect(updateMany).toHaveBeenCalledTimes(1);
+    expect(findMany).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects claims on expired missions", async () => {
+    const res = await request(createApp({
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "user-1", wallet: "0xdemo" }) },
+      mission: { findUnique: vi.fn().mockResolvedValue({ id: "mission-1", status: "EXPIRED", communityId: "demo-community" }) }
+    } as never)).post("/missions/mission-1/claim").send({ wallet: "0xdemo" });
+    expect(res.status).toBe(409);
+  });
+
+  it("returns a mixed community activity feed", async () => {
+    const app = createApp({
+      missionClaim: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            claimedAt: "2026-08-18T12:00:00.000Z",
+            user: { wallet: "0xabc", displayName: "Raider" },
+            mission: { title: "Spike" }
+          }
+        ])
+      },
+      submission: { findMany: vi.fn().mockResolvedValue([]) },
+      score: { findMany: vi.fn().mockResolvedValue([]) }
+    } as never);
+    const res = await request(app).get("/communities/demo-community/activity");
+    expect(res.status).toBe(200);
+    expect(res.body[0]).toMatchObject({ type: "CLAIM", title: "Spike", wallet: "0xabc" });
   });
 });

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import ActivityFeed from "./ActivityFeed";
 import JoinCta from "./JoinCta";
 
 export default function HomePage() {
@@ -17,6 +18,7 @@ export default function HomePage() {
         </div>
       </section>
       <JoinCta />
+      <ActivityFeed />
     </main>
   );
 }
