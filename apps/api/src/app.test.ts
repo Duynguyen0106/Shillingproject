@@ -604,6 +604,8 @@ describe("contributor profile", () => {
     expect(res.status).toBe(200);
     expect(res.body.claimsCount).toBe(1);
     expect(res.body.shortLinks[0].clicks).toBe(4);
+    expect(res.body.warRoom.clickCount).toBe(4);
+    expect(res.body.warRoom.checkInCount).toBe(0);
   });
 });
 
@@ -833,105 +835,108 @@ describe("CTO lead succession", () => {
   });
 });
 
-describe("CTO lead succession", () => {
-  it("rejects claiming an occupied lead seat", async () => {
+describe("mission war room", () => {
+  it("lets only the active CTO lead pin a narrative", async () => {
+    const update = vi.fn().mockResolvedValue({
+      pinText: "Push the whale buy on X",
+      pinnedAt: new Date(),
+      pinnedBy: { wallet: "0xlead", displayName: "Lead" }
+    });
     const app = createApp({
-      community: { findUnique: vi.fn().mockResolvedValue({ id: "demo-community" }) },
-      user: { findUnique: vi.fn().mockResolvedValue({ id: "user-2", wallet: "0xchallenger" }) },
+      mission: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "mission-1",
+          communityId: "demo-community",
+          status: "ACTIVE",
+          createdAt: new Date(),
+          priority: "HIGH"
+        }),
+        update
+      },
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "user-1", wallet: "0xlead" }) },
       communityMember: {
         findFirst: vi.fn().mockResolvedValue({
           role: "lead",
           lastActiveAt: new Date(),
-          user: { wallet: "0xlead", displayName: "First" }
+          user: { wallet: "0xlead", displayName: "Lead" }
         }),
-        updateMany: vi.fn(),
-        upsert: vi.fn()
+        updateMany: vi.fn()
       }
     } as never);
 
-    const res = await request(app).post("/communities/demo-community/lead/claim").send({ wallet: "0xchallenger" });
-    expect(res.status).toBe(409);
-    expect(res.body.lead.vacant).toBe(false);
+    const denied = await request(app).post("/missions/mission-1/pin").send({
+      wallet: "0xmember",
+      body: "fake pin"
+    });
+    expect(denied.status).toBe(403);
+
+    const ok = await request(app).post("/missions/mission-1/pin").send({
+      wallet: "0xlead",
+      body: "Push the whale buy on X"
+    });
+    expect(ok.status).toBe(200);
+    expect(ok.body.pin.body).toBe("Push the whale buy on X");
+    expect(update).toHaveBeenCalledTimes(1);
   });
 
-  it("lets a joined wallet claim lead after the previous CTO resigns", async () => {
-    const updateMany = vi.fn().mockResolvedValue({ count: 0 });
-    const upsert = vi.fn().mockResolvedValue({ role: "lead" });
-    const findFirst = vi.fn()
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({
-        role: "lead",
-        lastActiveAt: new Date(),
-        user: { wallet: "0xchallenger", displayName: "New CTO" }
-      });
+  it("lets a joined wallet check in while the raid is live", async () => {
+    const upsert = vi.fn().mockResolvedValue({ id: "in-1" });
     const app = createApp({
-      community: { findUnique: vi.fn().mockResolvedValue({ id: "demo-community" }) },
-      user: { findUnique: vi.fn().mockResolvedValue({ id: "user-2", wallet: "0xchallenger" }) },
-      communityMember: { findFirst, updateMany, upsert }
+      mission: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "mission-1",
+          communityId: "demo-community",
+          status: "ACTIVE",
+          createdAt: new Date(),
+          priority: "HIGH"
+        })
+      },
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "user-2", wallet: "0xraid" }) },
+      communityMember: {
+        findUnique: vi.fn().mockResolvedValue({ role: "member" }),
+        updateMany: vi.fn()
+      },
+      missionCheckIn: {
+        upsert,
+        count: vi.fn().mockResolvedValue(3)
+      }
     } as never);
 
-    const res = await request(app).post("/communities/demo-community/lead/claim").send({ wallet: "0xchallenger" });
+    const res = await request(app).post("/missions/mission-1/check-in").send({ wallet: "0xraid" });
     expect(res.status).toBe(200);
-    expect(res.body.claimed).toBe(true);
-    expect(res.body.you.isLead).toBe(true);
-    expect(updateMany).toHaveBeenCalledTimes(1);
+    expect(res.body.checkedIn).toBe(true);
+    expect(res.body.checkInCount).toBe(3);
     expect(upsert).toHaveBeenCalledTimes(1);
   });
 
-  it("opens the seat after 48h of inactivity so a new wallet can CTO", async () => {
-    const stale = new Date(Date.now() - 49 * 60 * 60 * 1000);
-    const findFirst = vi.fn()
-      .mockResolvedValueOnce({
-        role: "lead",
-        lastActiveAt: stale,
-        user: { wallet: "0xold", displayName: "Gone" }
-      })
-      .mockResolvedValueOnce({
-        role: "lead",
-        lastActiveAt: new Date(),
-        user: { wallet: "0xnew", displayName: "New" }
-      });
-    const app = createApp({
-      community: { findUnique: vi.fn().mockResolvedValue({ id: "demo-community" }) },
-      user: { findUnique: vi.fn().mockResolvedValue({ id: "user-3", wallet: "0xnew" }) },
-      communityMember: {
-        findFirst,
-        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
-        upsert: vi.fn().mockResolvedValue({ role: "lead" })
-      }
-    } as never);
-
-    const res = await request(app).post("/communities/demo-community/lead/claim").send({ wallet: "0xnew" });
-    expect(res.status).toBe(200);
-    expect(res.body.lead.wallet).toBe("0xnew");
+  it("locks check-ins when the mission has expired", async () => {
+    const res = await request(createApp({
+      mission: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "mission-1",
+          communityId: "demo-community",
+          status: "EXPIRED"
+        })
+      },
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "user-2", wallet: "0xraid" }) }
+    } as never)).post("/missions/mission-1/check-in").send({ wallet: "0xraid" });
+    expect(res.status).toBe(409);
   });
 
-  it("only the current lead can resign", async () => {
-    const app = createApp({
-      user: { findUnique: vi.fn().mockResolvedValue({ id: "user-2", wallet: "0xmember" }) },
-      communityMember: {
-        findUnique: vi.fn().mockResolvedValue({ id: "mem-2", role: "member" })
-      }
-    } as never);
-    const res = await request(app).post("/communities/demo-community/lead/resign").send({ wallet: "0xmember" });
+  it("rejects check-in from a wallet that has not joined the mint", async () => {
+    const res = await request(createApp({
+      mission: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "mission-1",
+          communityId: "demo-community",
+          status: "ACTIVE",
+          createdAt: new Date(),
+          priority: "HIGH"
+        })
+      },
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "user-9", wallet: "0xout" }) },
+      communityMember: { findUnique: vi.fn().mockResolvedValue(null) }
+    } as never)).post("/missions/mission-1/check-in").send({ wallet: "0xout" });
     expect(res.status).toBe(403);
-  });
-
-  it("clears the seat when the lead resigns", async () => {
-    const update = vi.fn().mockResolvedValue({ role: "member" });
-    const app = createApp({
-      user: { findUnique: vi.fn().mockResolvedValue({ id: "user-1", wallet: "0xlead" }) },
-      communityMember: {
-        findUnique: vi.fn().mockResolvedValue({ id: "mem-1", role: "lead" }),
-        update,
-        findFirst: vi.fn().mockResolvedValue(null)
-      }
-    } as never);
-    const res = await request(app).post("/communities/demo-community/lead/resign").send({ wallet: "0xlead" });
-    expect(res.status).toBe(200);
-    expect(res.body.resigned).toBe(true);
-    expect(res.body.lead.vacant).toBe(true);
-    expect(res.body.lead.reason).toBe("resigned");
-    expect(update).toHaveBeenCalledTimes(1);
   });
 });

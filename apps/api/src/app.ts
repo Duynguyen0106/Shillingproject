@@ -86,6 +86,11 @@ const claimSchema = z.object({
   wallet: z.string().min(3).optional()
 });
 
+const pinSchema = z.object({
+  wallet: z.string().min(3).optional(),
+  body: z.string().trim().min(1).max(280)
+});
+
 const tokenLookupSchema = z.object({
   q: z.string().min(2).optional(),
   chain: z.string().min(2).optional(),
@@ -499,6 +504,43 @@ async function promoteLead(prisma: PrismaClient, communityId: string, userId: st
   });
 }
 
+function serializeWarRoom(mission: {
+  status?: string;
+  createdAt?: Date;
+  priority?: Priority;
+  pinText?: string | null;
+  pinnedAt?: Date | null;
+  pinnedBy?: { wallet: string; displayName: string | null } | null;
+  checkIns?: { createdAt: Date; user: { wallet: string; displayName: string | null } }[];
+  claims?: unknown[];
+  tasks?: { submissions?: unknown[] }[];
+  shortLinks?: { userId?: string | null; _count?: { clicks: number } }[];
+}) {
+  const checkIns = mission.checkIns ?? [];
+  const proofCount = (mission.tasks ?? []).reduce((sum, task) => sum + (task.submissions?.length ?? 0), 0);
+  const clickCount = (mission.shortLinks ?? []).reduce((sum, link) => sum + (link._count?.clicks ?? 0), 0);
+  return {
+    closed: Boolean(missionClosedReason(mission)),
+    pin: mission.pinText
+      ? {
+          body: mission.pinText,
+          at: mission.pinnedAt?.toISOString?.() ?? mission.pinnedAt ?? null,
+          wallet: mission.pinnedBy?.wallet ?? null,
+          displayName: mission.pinnedBy?.displayName ?? null
+        }
+      : null,
+    checkIns: checkIns.map((entry) => ({
+      wallet: entry.user.wallet,
+      displayName: entry.user.displayName,
+      at: entry.createdAt
+    })),
+    checkInCount: checkIns.length,
+    claimsCount: mission.claims?.length ?? 0,
+    proofCount,
+    clickCount
+  };
+}
+
 export function createApp(prisma: PrismaClient) {
   const app = express();
   app.use(cors());
@@ -855,13 +897,14 @@ export function createApp(prisma: PrismaClient) {
       include: {
         tasks: true,
         shortLinks: { where: { userId: null }, include: { _count: { select: { clicks: true } } } },
-        _count: { select: { claims: true } }
+        _count: { select: { claims: true, checkIns: true } }
       },
       orderBy: { createdAt: "desc" }
     });
     res.json(missions.map((mission) => ({
       ...mission,
-      claimsCount: mission._count.claims,
+      claimsCount: mission._count?.claims ?? 0,
+      checkInCount: mission._count?.checkIns ?? 0,
       shortLinks: serializeShortLinks(mission.shortLinks),
       ...withExpiryFields(mission)
     })));
@@ -951,10 +994,15 @@ export function createApp(prisma: PrismaClient) {
           }
         },
         signal: true,
-        shortLinks: { where: { userId: null }, include: { _count: { select: { clicks: true } } } },
+        pinnedBy: { select: { wallet: true, displayName: true } },
+        shortLinks: { include: { _count: { select: { clicks: true } } } },
         claims: {
           include: { user: { select: { wallet: true, displayName: true } } },
           orderBy: { claimedAt: "desc" }
+        },
+        checkIns: {
+          include: { user: { select: { wallet: true, displayName: true } } },
+          orderBy: { createdAt: "desc" }
         }
       }
     });
@@ -966,7 +1014,8 @@ export function createApp(prisma: PrismaClient) {
     res.json({
       ...mission,
       claimsCount: mission.claims.length,
-      shortLinks: serializeShortLinks(mission.shortLinks),
+      shortLinks: serializeShortLinks((mission.shortLinks ?? []).filter((link) => !link.userId)),
+      warRoom: serializeWarRoom(mission),
       ...withExpiryFields(mission)
     });
   }));
@@ -990,8 +1039,74 @@ export function createApp(prisma: PrismaClient) {
       create: { missionId: mission.id, userId: user.id }
     });
     const shortLink = await ensureContributorLink(prisma, mission, user.id);
+    await prisma.missionCheckIn?.upsert?.({
+      where: { missionId_userId: { missionId: mission.id, userId: user.id } },
+      update: {},
+      create: { missionId: mission.id, userId: user.id }
+    });
     await touchMemberActivity(prisma, user.id, mission.communityId);
     res.json({ missionId: mission.id, claimed: true, claim, shortLink });
+  }));
+
+  app.post("/missions/:id/pin", asyncRoute(async (req, res) => {
+    const { wallet: bodyWallet, body } = pinSchema.parse(req.body ?? {});
+    const wallet = resolveActorWallet(req, bodyWallet);
+    if (!wallet) return res.status(401).json({ error: "Connect a wallet and sign in first" });
+    const mission = await prisma.mission.findUnique({ where: { id: req.params.id } });
+    if (!mission) return res.status(404).json({ error: "Mission not found" });
+    if (mission.status === MissionStatus.ACTIVE && isMissionStale(mission)) {
+      await prisma.mission.update({ where: { id: mission.id }, data: { status: MissionStatus.EXPIRED } });
+    }
+    const closed = missionClosedReason(mission);
+    if (closed) return res.status(409).json({ error: closed });
+    const seat = await loadLeadSeat(prisma, mission.communityId);
+    if (seat.vacant || !sameWallet(seat.wallet, wallet)) {
+      return res.status(403).json({ error: "Only the active CTO lead can pin the war-room narrative" });
+    }
+    let user = await prisma.user.findUnique({ where: { wallet } });
+    if (!user) user = await prisma.user.create({ data: { wallet } });
+    const updated = await prisma.mission.update({
+      where: { id: mission.id },
+      data: { pinText: body, pinnedAt: new Date(), pinnedById: user.id },
+      include: { pinnedBy: { select: { wallet: true, displayName: true } } }
+    });
+    await touchMemberActivity(prisma, user.id, mission.communityId);
+    res.json({
+      pinned: true,
+      pin: {
+        body: updated.pinText,
+        at: updated.pinnedAt,
+        wallet: updated.pinnedBy?.wallet ?? wallet,
+        displayName: updated.pinnedBy?.displayName ?? null
+      }
+    });
+  }));
+
+  app.post("/missions/:id/check-in", asyncRoute(async (req, res) => {
+    const { wallet: bodyWallet } = claimSchema.parse(req.body ?? {});
+    const wallet = resolveActorWallet(req, bodyWallet);
+    if (!wallet) return res.status(401).json({ error: "Connect a wallet and sign in first" });
+    const mission = await prisma.mission.findUnique({ where: { id: req.params.id } });
+    if (!mission) return res.status(404).json({ error: "Mission not found" });
+    if (mission.status === MissionStatus.ACTIVE && isMissionStale(mission)) {
+      await prisma.mission.update({ where: { id: mission.id }, data: { status: MissionStatus.EXPIRED } });
+    }
+    const closed = missionClosedReason(mission);
+    if (closed) return res.status(409).json({ error: closed });
+    let user = await prisma.user.findUnique({ where: { wallet } });
+    if (!user) user = await prisma.user.create({ data: { wallet } });
+    const membership = await loadMembership(prisma, mission.communityId, wallet);
+    if (!membership) {
+      return res.status(403).json({ error: "Join this mint before checking in" });
+    }
+    await prisma.missionCheckIn.upsert({
+      where: { missionId_userId: { missionId: mission.id, userId: user.id } },
+      update: {},
+      create: { missionId: mission.id, userId: user.id }
+    });
+    await touchMemberActivity(prisma, user.id, mission.communityId);
+    const checkInCount = await prisma.missionCheckIn.count({ where: { missionId: mission.id } });
+    res.json({ checkedIn: true, checkInCount });
   }));
 
   app.post("/missions/:id/complete", asyncRoute(async (req, res) => {

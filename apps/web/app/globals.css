@@ -197,6 +197,12 @@ label {
   font-size: 13px;
   background: #111114cc;
 }
+.checkin-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
 .dex-chart {
   width: 100%;
   height: 420px;

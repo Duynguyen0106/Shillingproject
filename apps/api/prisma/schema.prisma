@@ -50,6 +50,8 @@ model User {
   scores       Score[]
   claims       MissionClaim[]
   shortLinks   ShortLink[]
+  pinnedMissions Mission[] @relation("MissionPins")
+  checkIns     MissionCheckIn[]
 }
 
 model Community {
@@ -109,13 +111,30 @@ model Mission {
   status        MissionStatus @default(ACTIVE)
   priority      Priority      @default(MEDIUM)
   urgency       Int           @default(50)
+  pinText       String?
+  pinnedAt      DateTime?
+  pinnedById    String?
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
   community     Community     @relation(fields: [communityId], references: [id], onDelete: Cascade)
   signal        Signal?       @relation(fields: [signalId], references: [id], onDelete: SetNull)
+  pinnedBy      User?         @relation("MissionPins", fields: [pinnedById], references: [id], onDelete: SetNull)
   tasks         MissionTask[]
   shortLinks    ShortLink[]
   claims        MissionClaim[]
+  checkIns      MissionCheckIn[]
+}
+
+model MissionCheckIn {
+  id        String   @id @default(cuid())
+  missionId String
+  userId    String
+  createdAt DateTime @default(now())
+  mission   Mission  @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([missionId, userId])
+  @@index([missionId])
 }
 
 model MissionClaim {

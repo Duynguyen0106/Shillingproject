@@ -20,8 +20,10 @@
 - POST `/signals/:id/create-mission`
 - GET `/communities/:id/missions?status=active` — expires stale missions (HIGH 2h, MEDIUM 6h, LOW 24h) then lists
 - GET `/communities/:id/activity` — recent claims, proofs, and CTA click rewards
-- GET `/missions/:id`
-- POST `/missions/:id/claim` `{ wallet? }` — SIWE Bearer token overrides body wallet; issues a personal tracked CTA; 409 if expired/completed
+- GET `/missions/:id` — includes `warRoom` (pin, check-ins, claims/proofs/clicks). Pins and check-ins lock when the mission expires.
+- POST `/missions/:id/claim` `{ wallet? }` — SIWE Bearer token overrides body wallet; issues a personal tracked CTA; also checks the raider in; 409 if expired/completed
+- POST `/missions/:id/pin` `{ body, wallet? }` — active CTO lead pins the one-line talk track (max 280). Not a chat.
+- POST `/missions/:id/check-in` `{ wallet? }` — joined member taps I'm in for this raid only
 - POST `/missions/:id/complete` — requires a connected wallet; 409 if expired/completed
 
 ## Submissions / Scoring

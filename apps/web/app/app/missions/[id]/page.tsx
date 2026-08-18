@@ -3,6 +3,7 @@ import ClaimButton from "./ClaimButton";
 import CompleteMissionButton from "./CompleteMissionButton";
 import ShareKit from "../../../ShareKit";
 import SubmissionForm from "./SubmissionForm";
+import WarRoom, { type WarRoomData } from "./WarRoom";
 import { formatRemaining } from "../../../../lib/missionTime";
 
 type Submission = {
@@ -45,6 +46,8 @@ type Mission = {
   claims?: Claim[];
   claimsCount?: number;
   remainingMs?: number | null;
+  communityId?: string;
+  warRoom?: WarRoomData;
 };
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:4000";
@@ -64,6 +67,19 @@ export default async function MissionDetailsPage({ params }: { params: { id: str
         <span>Claims: {mission.claimsCount ?? mission.claims?.length ?? 0}</span>
         {typeof mission.remainingMs === "number" && <span>{formatRemaining(mission.remainingMs)}</span>}
       </div>
+      <WarRoom
+        missionId={mission.id}
+        communityId={mission.communityId}
+        initial={mission.warRoom ?? {
+          closed: mission.status !== "ACTIVE",
+          pin: null,
+          checkIns: [],
+          checkInCount: 0,
+          claimsCount: mission.claimsCount ?? mission.claims?.length ?? 0,
+          proofCount: 0,
+          clickCount: tracked?.clicks ?? 0
+        }}
+      />
       {tracked && (
         <div className="card">
           <strong>Tracked CTA</strong>

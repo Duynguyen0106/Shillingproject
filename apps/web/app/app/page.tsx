@@ -12,6 +12,7 @@ type Mission = {
   urgency: number;
   status: string;
   claimsCount?: number;
+  checkInCount?: number;
   remainingMs?: number | null;
   shortLinks?: { code: string; clicks?: number }[];
 };
@@ -41,6 +42,7 @@ export default async function MissionBoardPage() {
             <span>Status: {m.status}</span>
             {typeof m.remainingMs === "number" && <span>{formatRemaining(m.remainingMs)}</span>}
             <span>Claims: {m.claimsCount ?? 0}</span>
+            {typeof m.checkInCount === "number" && <span>{m.checkInCount} in</span>}
             {typeof m.shortLinks?.[0]?.clicks === "number" && <span>Clicks: {m.shortLinks[0].clicks}</span>}
             <Link href={`/app/missions/${m.id}`}>Open mission</Link>
           </div>
