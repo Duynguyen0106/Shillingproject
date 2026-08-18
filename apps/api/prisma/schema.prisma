@@ -74,15 +74,17 @@ model Community {
 }
 
 model CommunityMember {
-  id          String   @id @default(cuid())
-  userId      String
-  communityId String
-  role        String   @default("member")
-  joinedAt    DateTime @default(now())
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  id           String   @id @default(cuid())
+  userId       String
+  communityId  String
+  role         String   @default("member")
+  joinedAt     DateTime @default(now())
+  lastActiveAt DateTime @default(now())
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  community    Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
 
   @@unique([userId, communityId])
+  @@index([communityId, role])
 }
 
 model Signal {

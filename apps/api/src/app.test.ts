@@ -696,6 +696,13 @@ describe("DexScreener contract lookup", () => {
           chainId: "ethereum",
           contractAddress: "0x6982508145454ce325ddbe47a25d4ec3d2311933"
         })
+      },
+      communityMember: {
+        findFirst: vi.fn().mockResolvedValue({
+          role: "lead",
+          lastActiveAt: new Date(),
+          user: { wallet: "0xlead", displayName: "First CTO" }
+        })
       }
     } as never);
 
@@ -710,6 +717,8 @@ describe("DexScreener contract lookup", () => {
     expect(res.body.listings[0].chainId).toBe("ethereum");
     expect(res.body.proof.communityTakeover).toBe(true);
     expect(res.body.trust.reasons.some((reason: string) => reason.includes("community takeover"))).toBe(true);
+    expect(res.body.lead.wallet).toBe("0xlead");
+    expect(res.body.lead.vacant).toBe(false);
   });
 
   it("requires a wallet to bind a new contract community", async () => {
@@ -718,5 +727,211 @@ describe("DexScreener contract lookup", () => {
       contractAddress: "0x6982508145454ce325ddbe47a25d4ec3d2311933"
     });
     expect(res.status).toBe(401);
+  });
+});
+
+describe("CTO lead succession", () => {
+  it("rejects claiming an occupied lead seat", async () => {
+    const app = createApp({
+      community: { findUnique: vi.fn().mockResolvedValue({ id: "demo-community" }) },
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "user-2", wallet: "0xchallenger" }) },
+      communityMember: {
+        findFirst: vi.fn().mockResolvedValue({
+          role: "lead",
+          lastActiveAt: new Date(),
+          user: { wallet: "0xlead", displayName: "First" }
+        }),
+        updateMany: vi.fn(),
+        upsert: vi.fn()
+      }
+    } as never);
+
+    const res = await request(app).post("/communities/demo-community/lead/claim").send({ wallet: "0xchallenger" });
+    expect(res.status).toBe(409);
+    expect(res.body.lead.vacant).toBe(false);
+  });
+
+  it("lets a joined wallet claim lead after the previous CTO resigns", async () => {
+    const updateMany = vi.fn().mockResolvedValue({ count: 0 });
+    const upsert = vi.fn().mockResolvedValue({ role: "lead" });
+    const findFirst = vi.fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        role: "lead",
+        lastActiveAt: new Date(),
+        user: { wallet: "0xchallenger", displayName: "New CTO" }
+      });
+    const app = createApp({
+      community: { findUnique: vi.fn().mockResolvedValue({ id: "demo-community" }) },
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "user-2", wallet: "0xchallenger" }) },
+      communityMember: { findFirst, updateMany, upsert }
+    } as never);
+
+    const res = await request(app).post("/communities/demo-community/lead/claim").send({ wallet: "0xchallenger" });
+    expect(res.status).toBe(200);
+    expect(res.body.claimed).toBe(true);
+    expect(res.body.you.isLead).toBe(true);
+    expect(updateMany).toHaveBeenCalledTimes(1);
+    expect(upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens the seat after 48h of inactivity so a new wallet can CTO", async () => {
+    const stale = new Date(Date.now() - 49 * 60 * 60 * 1000);
+    const findFirst = vi.fn()
+      .mockResolvedValueOnce({
+        role: "lead",
+        lastActiveAt: stale,
+        user: { wallet: "0xold", displayName: "Gone" }
+      })
+      .mockResolvedValueOnce({
+        role: "lead",
+        lastActiveAt: new Date(),
+        user: { wallet: "0xnew", displayName: "New" }
+      });
+    const app = createApp({
+      community: { findUnique: vi.fn().mockResolvedValue({ id: "demo-community" }) },
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "user-3", wallet: "0xnew" }) },
+      communityMember: {
+        findFirst,
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+        upsert: vi.fn().mockResolvedValue({ role: "lead" })
+      }
+    } as never);
+
+    const res = await request(app).post("/communities/demo-community/lead/claim").send({ wallet: "0xnew" });
+    expect(res.status).toBe(200);
+    expect(res.body.lead.wallet).toBe("0xnew");
+  });
+
+  it("only the current lead can resign", async () => {
+    const app = createApp({
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "user-2", wallet: "0xmember" }) },
+      communityMember: {
+        findUnique: vi.fn().mockResolvedValue({ id: "mem-2", role: "member" })
+      }
+    } as never);
+    const res = await request(app).post("/communities/demo-community/lead/resign").send({ wallet: "0xmember" });
+    expect(res.status).toBe(403);
+  });
+
+  it("clears the seat when the lead resigns", async () => {
+    const update = vi.fn().mockResolvedValue({ role: "member" });
+    const app = createApp({
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "user-1", wallet: "0xlead" }) },
+      communityMember: {
+        findUnique: vi.fn().mockResolvedValue({ id: "mem-1", role: "lead" }),
+        update,
+        findFirst: vi.fn().mockResolvedValue(null)
+      }
+    } as never);
+    const res = await request(app).post("/communities/demo-community/lead/resign").send({ wallet: "0xlead" });
+    expect(res.status).toBe(200);
+    expect(res.body.resigned).toBe(true);
+    expect(res.body.lead.vacant).toBe(true);
+    expect(res.body.lead.reason).toBe("resigned");
+    expect(update).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("CTO lead succession", () => {
+  it("rejects claiming an occupied lead seat", async () => {
+    const app = createApp({
+      community: { findUnique: vi.fn().mockResolvedValue({ id: "demo-community" }) },
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "user-2", wallet: "0xchallenger" }) },
+      communityMember: {
+        findFirst: vi.fn().mockResolvedValue({
+          role: "lead",
+          lastActiveAt: new Date(),
+          user: { wallet: "0xlead", displayName: "First" }
+        }),
+        updateMany: vi.fn(),
+        upsert: vi.fn()
+      }
+    } as never);
+
+    const res = await request(app).post("/communities/demo-community/lead/claim").send({ wallet: "0xchallenger" });
+    expect(res.status).toBe(409);
+    expect(res.body.lead.vacant).toBe(false);
+  });
+
+  it("lets a joined wallet claim lead after the previous CTO resigns", async () => {
+    const updateMany = vi.fn().mockResolvedValue({ count: 0 });
+    const upsert = vi.fn().mockResolvedValue({ role: "lead" });
+    const findFirst = vi.fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        role: "lead",
+        lastActiveAt: new Date(),
+        user: { wallet: "0xchallenger", displayName: "New CTO" }
+      });
+    const app = createApp({
+      community: { findUnique: vi.fn().mockResolvedValue({ id: "demo-community" }) },
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "user-2", wallet: "0xchallenger" }) },
+      communityMember: { findFirst, updateMany, upsert }
+    } as never);
+
+    const res = await request(app).post("/communities/demo-community/lead/claim").send({ wallet: "0xchallenger" });
+    expect(res.status).toBe(200);
+    expect(res.body.claimed).toBe(true);
+    expect(res.body.you.isLead).toBe(true);
+    expect(updateMany).toHaveBeenCalledTimes(1);
+    expect(upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens the seat after 48h of inactivity so a new wallet can CTO", async () => {
+    const stale = new Date(Date.now() - 49 * 60 * 60 * 1000);
+    const findFirst = vi.fn()
+      .mockResolvedValueOnce({
+        role: "lead",
+        lastActiveAt: stale,
+        user: { wallet: "0xold", displayName: "Gone" }
+      })
+      .mockResolvedValueOnce({
+        role: "lead",
+        lastActiveAt: new Date(),
+        user: { wallet: "0xnew", displayName: "New" }
+      });
+    const app = createApp({
+      community: { findUnique: vi.fn().mockResolvedValue({ id: "demo-community" }) },
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "user-3", wallet: "0xnew" }) },
+      communityMember: {
+        findFirst,
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+        upsert: vi.fn().mockResolvedValue({ role: "lead" })
+      }
+    } as never);
+
+    const res = await request(app).post("/communities/demo-community/lead/claim").send({ wallet: "0xnew" });
+    expect(res.status).toBe(200);
+    expect(res.body.lead.wallet).toBe("0xnew");
+  });
+
+  it("only the current lead can resign", async () => {
+    const app = createApp({
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "user-2", wallet: "0xmember" }) },
+      communityMember: {
+        findUnique: vi.fn().mockResolvedValue({ id: "mem-2", role: "member" })
+      }
+    } as never);
+    const res = await request(app).post("/communities/demo-community/lead/resign").send({ wallet: "0xmember" });
+    expect(res.status).toBe(403);
+  });
+
+  it("clears the seat when the lead resigns", async () => {
+    const update = vi.fn().mockResolvedValue({ role: "member" });
+    const app = createApp({
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "user-1", wallet: "0xlead" }) },
+      communityMember: {
+        findUnique: vi.fn().mockResolvedValue({ id: "mem-1", role: "lead" }),
+        update,
+        findFirst: vi.fn().mockResolvedValue(null)
+      }
+    } as never);
+    const res = await request(app).post("/communities/demo-community/lead/resign").send({ wallet: "0xlead" });
+    expect(res.status).toBe(200);
+    expect(res.body.resigned).toBe(true);
+    expect(res.body.lead.vacant).toBe(true);
+    expect(res.body.lead.reason).toBe("resigned");
+    expect(update).toHaveBeenCalledTimes(1);
   });
 });

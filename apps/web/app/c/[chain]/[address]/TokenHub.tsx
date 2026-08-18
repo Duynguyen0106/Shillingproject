@@ -28,6 +28,20 @@ type Listing = {
   liquidityUsd: number;
 };
 
+type LeadSeat = {
+  vacant: boolean;
+  reason: "occupied" | "resigned" | "inactive";
+  wallet: string | null;
+  displayName: string | null;
+  lastActiveAt: string | null;
+  remainingMs: number | null;
+};
+
+type Membership = {
+  role: string;
+  isLead: boolean;
+};
+
 type Mission = {
   id: string;
   title: string;
@@ -66,6 +80,8 @@ type LookupResponse = {
     dexUrl?: string | null;
     description?: string | null;
   } | null;
+  lead?: LeadSeat | null;
+  you?: Membership | null;
   ambiguous?: boolean;
   warning?: string;
 };
@@ -87,7 +103,8 @@ export default function TokenHub({ chain, address }: { chain: string; address: s
 
   useEffect(() => {
     const load = async () => {
-      const res = await fetch(`${API_BASE}/tokens/lookup?chain=${encodeURIComponent(chain)}&address=${encodeURIComponent(address)}`);
+      const walletQs = getStoredWallet() ? `&wallet=${encodeURIComponent(getStoredWallet())}` : "";
+      const res = await fetch(`${API_BASE}/tokens/lookup?chain=${encodeURIComponent(chain)}&address=${encodeURIComponent(address)}${walletQs}`);
       if (!res.ok) {
         setStatus("Token not found on DexScreener. Check the chain and contract.");
         return;
@@ -107,7 +124,7 @@ export default function TokenHub({ chain, address }: { chain: string; address: s
       setStatus("");
     };
     void load();
-  }, [chain, address]);
+  }, [chain, address, wallet]);
 
   useEffect(() => {
     const communityId = data?.community?.id;
@@ -154,8 +171,68 @@ export default function TokenHub({ chain, address }: { chain: string; address: s
       contractAddress: body.community.contractAddress,
       dexUrl: body.community.dexUrl
     });
-    setData((current) => ({ token: current?.token ?? body.token, community: body.community, warning: current?.warning, trust: current?.trust, listings: current?.listings, proof: current?.proof }));
-    setStatus(body.created ? "Community created and bound to this contract." : "Opened the existing community for this contract.");
+    setData((current) => ({
+      token: current?.token ?? body.token,
+      community: body.community,
+      warning: current?.warning,
+      trust: current?.trust,
+      listings: current?.listings,
+      proof: current?.proof,
+      lead: body.lead ?? current?.lead,
+      you: body.you ?? current?.you
+    }));
+    setStatus(body.created ? "Community created and you are the CTO lead." : "Joined the existing community for this contract.");
+    setBusy(false);
+  }
+
+  async function claimLead() {
+    const communityId = data?.community?.id;
+    if (!wallet || !communityId) {
+      setStatus("Connect a wallet first.");
+      return;
+    }
+    setBusy(true);
+    setStatus("Claiming the CTO lead seat...");
+    const res = await fetch(`${API_BASE}/communities/${communityId}/lead/claim`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ wallet: getStoredWallet() })
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 409) {
+      setStatus(body.error || "An active CTO already holds this mint.");
+      if (body.lead) setData((current) => current ? { ...current, lead: body.lead } : current);
+      setBusy(false);
+      return;
+    }
+    if (!res.ok) {
+      setStatus(body.error || "Could not claim lead.");
+      setBusy(false);
+      return;
+    }
+    setData((current) => current ? { ...current, lead: body.lead, you: body.you } : current);
+    setStatus("You are the CTO lead for this mint. The community stays on this contract.");
+    setBusy(false);
+  }
+
+  async function resignLead() {
+    const communityId = data?.community?.id;
+    if (!wallet || !communityId) return;
+    setBusy(true);
+    setStatus("Resigning CTO lead...");
+    const res = await fetch(`${API_BASE}/communities/${communityId}/lead/resign`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ wallet: getStoredWallet() })
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setStatus(body.error || "Could not resign.");
+      setBusy(false);
+      return;
+    }
+    setData((current) => current ? { ...current, lead: body.lead, you: body.you } : current);
+    setStatus("You resigned. Another joined wallet can claim CTO on this same mint.");
     setBusy(false);
   }
 
@@ -163,7 +240,10 @@ export default function TokenHub({ chain, address }: { chain: string; address: s
   const community = data?.community;
   const trust = data?.trust;
   const proof = data?.proof;
+  const lead = data?.lead;
+  const you = data?.you;
   const otherChains = (data?.listings ?? []).filter((listing) => listing.chainId !== chain);
+  const isYouLead = Boolean(you?.isLead || (wallet && lead?.wallet && wallet.toLowerCase() === lead.wallet.toLowerCase()));
 
   return (
     <main className="container">
@@ -246,6 +326,39 @@ export default function TokenHub({ chain, address }: { chain: string; address: s
             <strong>{community.name}</strong> · {community.ticker}
           </p>
           <p className="muted">{community.description}</p>
+          {lead && (
+            <div className="card">
+              <h3>CTO lead</h3>
+              {lead.reason === "occupied" && lead.wallet && (
+                <p>
+                  {lead.displayName || "Lead"} · <code>{shortAddress(lead.wallet)}</code>
+                  {typeof lead.remainingMs === "number" ? ` · seat opens in ${formatRemaining(lead.remainingMs)} if they go quiet` : ""}
+                </p>
+              )}
+              {lead.reason === "inactive" && (
+                <p className="muted">
+                  Previous lead {lead.wallet ? shortAddress(lead.wallet) : ""} went quiet for 48h. The seat is open on this same mint — not a new community.
+                </p>
+              )}
+              {lead.reason === "resigned" && (
+                <p className="muted">No CTO lead. A joined wallet can claim the seat. The contract binding does not change.</p>
+              )}
+              <div className="row">
+                {!connected && <ConnectWalletButton />}
+                {connected && !you && (
+                  <button className="btn secondary" disabled={busy} onClick={() => void bindCommunity()}>Join this mint</button>
+                )}
+                {connected && lead.vacant && (
+                  <button className="btn" disabled={busy} onClick={() => void claimLead()}>
+                    {isYouLead ? "Keep CTO lead" : "Claim CTO lead"}
+                  </button>
+                )}
+                {connected && isYouLead && lead.reason !== "resigned" && (
+                  <button className="btn secondary" disabled={busy} onClick={() => void resignLead()}>Resign CTO</button>
+                )}
+              </div>
+            </div>
+          )}
           <div className="row">
             <Link className="btn" href="/app">Open mission board</Link>
             <Link className="btn secondary" href="/app/me">My Ops</Link>

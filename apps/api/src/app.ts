@@ -6,6 +6,7 @@ import { Prisma, PrismaClient, ActionType, MissionStatus, Platform, Priority, Si
 import { computeScore, scoreAttributedClick } from "@shillops/scoring-engine";
 import { getAddress, isAddress, verifyMessage } from "viem";
 import type { Address, Hex } from "viem";
+import { evaluateLeadSeat, sameWallet, type LeadMember, type LeadSeat } from "./lead";
 import { z } from "zod";
 import {
   fetchDexOrders,
@@ -88,7 +89,8 @@ const claimSchema = z.object({
 const tokenLookupSchema = z.object({
   q: z.string().min(2).optional(),
   chain: z.string().min(2).optional(),
-  address: z.string().min(3).optional()
+  address: z.string().min(3).optional(),
+  wallet: z.string().min(3).optional()
 });
 
 const fromTokenSchema = z.object({
@@ -458,6 +460,45 @@ function serializeShortLinks<T extends { code: string; targetUrl: string; missio
   }));
 }
 
+async function loadLeadSeat(prisma: PrismaClient, communityId: string): Promise<LeadSeat> {
+  const lead = await prisma.communityMember?.findFirst?.({
+    where: { communityId, role: "lead" },
+    include: { user: { select: { wallet: true, displayName: true } } },
+    orderBy: { lastActiveAt: "desc" }
+  });
+  return evaluateLeadSeat((lead as LeadMember | null) ?? null);
+}
+
+async function loadMembership(prisma: PrismaClient, communityId: string, wallet?: string) {
+  if (!wallet) return null;
+  const user = await prisma.user?.findUnique?.({ where: { wallet } });
+  if (!user) return null;
+  const member = await prisma.communityMember?.findUnique?.({
+    where: { userId_communityId: { userId: user.id, communityId } }
+  });
+  if (!member) return null;
+  return { role: member.role, isLead: member.role === "lead" };
+}
+
+async function touchMemberActivity(prisma: PrismaClient, userId: string, communityId: string) {
+  await prisma.communityMember?.updateMany?.({
+    where: { userId, communityId },
+    data: { lastActiveAt: new Date() }
+  });
+}
+
+async function promoteLead(prisma: PrismaClient, communityId: string, userId: string) {
+  await prisma.communityMember.updateMany({
+    where: { communityId, role: "lead" },
+    data: { role: "member" }
+  });
+  await prisma.communityMember.upsert({
+    where: { userId_communityId: { userId, communityId } },
+    update: { role: "lead", lastActiveAt: new Date() },
+    create: { userId, communityId, role: "lead", lastActiveAt: new Date() }
+  });
+}
+
 export function createApp(prisma: PrismaClient) {
   const app = express();
   app.use(cors());
@@ -593,7 +634,8 @@ export function createApp(prisma: PrismaClient) {
     const parsed = tokenLookupSchema.parse({
       q: req.query.q,
       chain: req.query.chain,
-      address: req.query.address
+      address: req.query.address,
+      wallet: req.query.wallet
     });
     const query = parsed.q || (parsed.chain && parsed.address ? `${parsed.chain}:${parsed.address}` : parsed.address);
     if (!query) return res.status(400).json({ error: "Provide q or address" });
@@ -614,12 +656,17 @@ export function createApp(prisma: PrismaClient) {
     if (!token && !community) return res.status(404).json({ error: "Token not found on DexScreener" });
     const orders = token ? await fetchDexOrders(token.chainId, token.address) : [];
     const proof = tokenProofFromOrders(orders);
+    const actorWallet = resolveActorWallet(req, parsed.wallet);
+    const lead = community ? await loadLeadSeat(prisma, community.id) : null;
+    const you = community ? await loadMembership(prisma, community.id, actorWallet) : null;
     res.json({
       token,
       listings: lookup?.listings ?? [],
       proof: token ? proof : null,
       trust: token ? tokenTrustSignals(token, parsedQuery.kind === "search", proof) : null,
       community,
+      lead,
+      you,
       ambiguous: parsedQuery.kind === "search",
       warning: "Communities are uniquely bound to a chain + contract. Ignore Telegram/Discord names that do not match this address."
     });
@@ -642,10 +689,16 @@ export function createApp(prisma: PrismaClient) {
     if (existing) {
       await prisma.communityMember.upsert({
         where: { userId_communityId: { userId: user.id, communityId: existing.id } },
-        update: {},
-        create: { userId: user.id, communityId: existing.id }
+        update: { lastActiveAt: new Date() },
+        create: { userId: user.id, communityId: existing.id, lastActiveAt: new Date() }
       });
-      return res.json({ community: existing, token, created: false });
+      return res.json({
+        community: existing,
+        token,
+        created: false,
+        lead: await loadLeadSeat(prisma, existing.id),
+        you: (await loadMembership(prisma, existing.id, wallet)) ?? { role: "member", isLead: false }
+      });
     }
     const community = await prisma.community.create({
       data: {
@@ -660,16 +713,25 @@ export function createApp(prisma: PrismaClient) {
     });
     await prisma.communityMember.upsert({
       where: { userId_communityId: { userId: user.id, communityId: community.id } },
-      update: {},
-      create: { userId: user.id, communityId: community.id, role: "lead" }
+      update: { role: "lead", lastActiveAt: new Date() },
+      create: { userId: user.id, communityId: community.id, role: "lead", lastActiveAt: new Date() }
     });
-    res.json({ community, token, created: true });
+    res.json({
+      community,
+      token,
+      created: true,
+      lead: await loadLeadSeat(prisma, community.id),
+      you: { role: "lead", isLead: true }
+    });
   }));
 
   app.get("/communities/:id", asyncRoute(async (req, res) => {
     const community = await prisma.community.findUnique({ where: { id: req.params.id } });
     if (!community) return res.status(404).json({ error: "Community not found" });
-    res.json(community);
+    res.json({
+      ...community,
+      lead: await loadLeadSeat(prisma, community.id)
+    });
   }));
 
   app.post("/communities/:id/join", asyncRoute(async (req, res) => {
@@ -678,10 +740,50 @@ export function createApp(prisma: PrismaClient) {
     if (!user) user = await prisma.user.create({ data: { wallet, displayName } });
     const member = await prisma.communityMember.upsert({
       where: { userId_communityId: { userId: user.id, communityId: req.params.id } },
-      update: {},
-      create: { userId: user.id, communityId: req.params.id }
+      update: { lastActiveAt: new Date() },
+      create: { userId: user.id, communityId: req.params.id, lastActiveAt: new Date() }
     });
-    res.json(member);
+    res.json({ ...member, lead: await loadLeadSeat(prisma, req.params.id) });
+  }));
+
+  app.post("/communities/:id/lead/resign", asyncRoute(async (req, res) => {
+    const { wallet: bodyWallet } = claimSchema.parse(req.body ?? {});
+    const wallet = resolveActorWallet(req, bodyWallet);
+    if (!wallet) return res.status(401).json({ error: "Connect a wallet and sign in first" });
+    const user = await prisma.user.findUnique({ where: { wallet } });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    const member = await prisma.communityMember.findUnique({
+      where: { userId_communityId: { userId: user.id, communityId: req.params.id } }
+    });
+    if (!member || member.role !== "lead") {
+      return res.status(403).json({ error: "Only the current CTO lead can resign" });
+    }
+    await prisma.communityMember.update({
+      where: { id: member.id },
+      data: { role: "member", lastActiveAt: new Date() }
+    });
+    const lead = await loadLeadSeat(prisma, req.params.id);
+    res.json({ resigned: true, lead, you: { role: "member", isLead: false } });
+  }));
+
+  app.post("/communities/:id/lead/claim", asyncRoute(async (req, res) => {
+    const { wallet: bodyWallet } = claimSchema.parse(req.body ?? {});
+    const wallet = resolveActorWallet(req, bodyWallet);
+    if (!wallet) return res.status(401).json({ error: "Connect a wallet and sign in first" });
+    const community = await prisma.community.findUnique({ where: { id: req.params.id } });
+    if (!community) return res.status(404).json({ error: "Community not found" });
+    const seat = await loadLeadSeat(prisma, community.id);
+    let user = await prisma.user.findUnique({ where: { wallet } });
+    if (!user) user = await prisma.user.create({ data: { wallet } });
+    if (!seat.vacant && !sameWallet(seat.wallet, wallet)) {
+      return res.status(409).json({
+        error: "This mint already has an active CTO lead",
+        lead: seat
+      });
+    }
+    await promoteLead(prisma, community.id, user.id);
+    const lead = await loadLeadSeat(prisma, community.id);
+    res.json({ claimed: true, lead, you: { role: "lead", isLead: true } });
   }));
 
   app.post("/signals/ingest", asyncRoute(async (req, res) => {
@@ -731,6 +833,11 @@ export function createApp(prisma: PrismaClient) {
     });
     if (!mission) {
       mission = await createMissionFromSignal(prisma, signal);
+    }
+    const actorWallet = resolveActorWallet(req);
+    if (actorWallet) {
+      const actor = await prisma.user?.findUnique?.({ where: { wallet: actorWallet } });
+      if (actor) await touchMemberActivity(prisma, actor.id, communityId);
     }
     res.json({ signal, mission });
   }));
@@ -883,6 +990,7 @@ export function createApp(prisma: PrismaClient) {
       create: { missionId: mission.id, userId: user.id }
     });
     const shortLink = await ensureContributorLink(prisma, mission, user.id);
+    await touchMemberActivity(prisma, user.id, mission.communityId);
     res.json({ missionId: mission.id, claimed: true, claim, shortLink });
   }));
 
@@ -943,6 +1051,7 @@ export function createApp(prisma: PrismaClient) {
     await prisma.leaderboardSnapshot.create({
       data: { communityId: task.mission.communityId, payload: rows as Prisma.InputJsonValue }
     });
+    await touchMemberActivity(prisma, user.id, task.mission.communityId);
 
     res.json(submission);
   }));
