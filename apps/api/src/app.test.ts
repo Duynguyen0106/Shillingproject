@@ -185,7 +185,14 @@ describe("attribution tracking", () => {
 
     const res = await request(app).get("/communities/demo-community/attribution");
     expect(res.status).toBe(200);
-    expect(res.body[0]).toEqual({ code: "abc12345", targetUrl: "https://example.com", clicks: 3, missionId: undefined });
+    expect(res.body[0]).toEqual({
+      code: "abc12345",
+      targetUrl: "https://example.com",
+      clicks: 3,
+      missionId: undefined,
+      wallet: null,
+      displayName: null
+    });
   });
 });
 
@@ -259,20 +266,30 @@ describe("submissions", () => {
 });
 
 describe("mission claims", () => {
-  it("persists a claim for a wallet", async () => {
+  it("persists a claim and issues a personal tracked CTA", async () => {
     const findUser = vi.fn().mockResolvedValue({ id: "user-1", wallet: "0xdemo" });
-    const findMission = vi.fn().mockResolvedValue({ id: "mission-1" });
+    const findMission = vi.fn().mockResolvedValue({ id: "mission-1", communityId: "demo-community" });
     const upsertClaim = vi.fn().mockResolvedValue({ id: "claim-1", missionId: "mission-1", userId: "user-1" });
+    const findLink = vi.fn().mockResolvedValue(null);
+    const createLink = vi.fn().mockResolvedValue({
+      id: "link-1",
+      code: "raidcta1",
+      targetUrl: "http://localhost:3000/app/missions/mission-1",
+      missionId: "mission-1"
+    });
     const app = createApp({
       user: { findUnique: findUser },
       mission: { findUnique: findMission },
-      missionClaim: { upsert: upsertClaim }
+      missionClaim: { upsert: upsertClaim },
+      shortLink: { findFirst: findLink, create: createLink }
     } as never);
 
     const res = await request(app).post("/missions/mission-1/claim").send({ wallet: "0xdemo" });
     expect(res.status).toBe(200);
     expect(res.body.claimed).toBe(true);
+    expect(res.body.shortLink.code).toBe("raidcta1");
     expect(upsertClaim).toHaveBeenCalledTimes(1);
+    expect(createLink).toHaveBeenCalledTimes(1);
   });
 
   it("rejects claim without wallet or session", async () => {
@@ -287,12 +304,21 @@ describe("mission claims", () => {
       .mockResolvedValueOnce(null)
       .mockResolvedValue({ id: "u1", wallet: account.address });
     const createUser = vi.fn().mockResolvedValue({ id: "u1", wallet: account.address });
-    const findMission = vi.fn().mockResolvedValue({ id: "mission-1" });
+    const findMission = vi.fn().mockResolvedValue({ id: "mission-1", communityId: "demo-community" });
     const upsertClaim = vi.fn().mockResolvedValue({ id: "claim-1", missionId: "mission-1", userId: "u1" });
     const app = createApp({
       user: { findUnique: findUser, create: createUser },
       mission: { findUnique: findMission },
-      missionClaim: { upsert: upsertClaim }
+      missionClaim: { upsert: upsertClaim },
+      shortLink: {
+        findFirst: vi.fn().mockResolvedValue({
+          id: "link-1",
+          code: "raidcta1",
+          targetUrl: "http://localhost:3000/app/missions/mission-1",
+          missionId: "mission-1",
+          _count: { clicks: 0 }
+        })
+      }
     } as never);
 
     const start = await request(app).post("/auth/siwe/start").send({ wallet: account.address });
@@ -382,6 +408,17 @@ describe("contributor profile", () => {
           { userId: "u0", _sum: { points: 50 } },
           { userId: "u1", _sum: { points: 18 } }
         ])
+      },
+      shortLink: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            code: "raidcta1",
+            targetUrl: "http://localhost:3000/app/missions/m1",
+            missionId: "m1",
+            mission: { title: "Spike" },
+            _count: { clicks: 7 }
+          }
+        ])
       }
     } as never);
 
@@ -391,6 +428,8 @@ describe("contributor profile", () => {
     expect(res.body.rank).toBe(2);
     expect(res.body.claimedMissionIds).toEqual(["m1"]);
     expect(res.body.submissions[0].pointsAwarded).toBe(18);
+    expect(res.body.clicks).toBe(7);
+    expect(res.body.links[0].code).toBe("raidcta1");
   });
 
   it("includes click counts on mission details", async () => {

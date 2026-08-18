@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import ConnectWalletButton from "../../../ConnectWalletButton";
+import CopyLink from "../../../CopyLink";
 import { API_BASE } from "../../../../lib/config";
 import { authHeaders, notifyOps } from "../../../../lib/session";
 import { useContributorProfile } from "../../../../lib/useContributorProfile";
@@ -10,6 +11,7 @@ export default function ClaimButton({ missionId }: { missionId: string }) {
   const { wallet, label, connected, profile } = useContributorProfile();
   const [status, setStatus] = useState("");
   const claimed = Boolean(profile?.claimedMissionIds?.includes(missionId));
+  const myLink = profile?.links?.find((link) => link.missionId === missionId);
 
   async function claim() {
     if (!wallet) {
@@ -24,7 +26,7 @@ export default function ClaimButton({ missionId }: { missionId: string }) {
     });
     if (res.ok) {
       notifyOps();
-      setStatus("Mission claimed. Submit proof to earn points.");
+      setStatus("Mission claimed. Share your tracked CTA, then submit proof.");
     } else {
       setStatus("Claim failed.");
     }
@@ -47,8 +49,13 @@ export default function ClaimButton({ missionId }: { missionId: string }) {
         <h3>Mission claimed</h3>
         <p className="muted">
           {label ? `${label} · ` : ""}
-          <code>{wallet}</code> is on this mission. Submit proof below.
+          <code>{wallet}</code> is on this mission. Share your unique CTA so clicks count as your impact.
         </p>
+        {myLink ? (
+          <CopyLink code={myLink.code} clicks={myLink.clicks} />
+        ) : (
+          <button className="btn secondary" onClick={() => void claim()}>Create my tracked CTA</button>
+        )}
         <p>{status}</p>
       </div>
     );

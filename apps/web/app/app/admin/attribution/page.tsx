@@ -6,6 +6,8 @@ type LinkStats = {
   code: string;
   targetUrl: string;
   clicks: number;
+  wallet?: string | null;
+  displayName?: string | null;
 };
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:4000";
@@ -21,6 +23,9 @@ export default async function AdminAttributionPage() {
       {rows.map((row) => (
         <div key={row.code} className="card">
           <strong>{row.code}</strong> → {row.targetUrl} ({row.clicks} clicks)
+          <div className="muted">
+            {row.wallet ? `Contributor: ${row.displayName || row.wallet}` : "Community link"}
+          </div>
           <div>
             <a href={`${API_BASE}/r/${row.code}`} target="_blank" rel="noreferrer">Open tracked link</a>
           </div>

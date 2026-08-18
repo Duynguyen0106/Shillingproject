@@ -32,9 +32,10 @@ async function main() {
   const taskId = mission?.tasks?.[0]?.id;
   if (!taskId) throw new Error("No mission task found");
 
-  await post(`/missions/${missionId}/claim`, {
+  const claimed = await post(`/missions/${missionId}/claim`, {
     wallet: "0xsmoke0001"
   });
+  if (!claimed?.shortLink?.code) throw new Error("Claim did not return a personal tracked CTA");
 
   await post(`/tasks/${taskId}/submissions`, {
     wallet: "0xsmoke0001",
@@ -60,10 +61,12 @@ async function main() {
         missionId,
         taskId,
         shortCode: link.code,
+        personalCode: claimed.shortLink.code,
         leaderboardTop: leaderboard[0] ?? null,
         attributionCount: attribution.length,
         myPoints: me.points,
-        myRank: me.rank
+        myRank: me.rank,
+        myClicks: me.clicks
       },
       null,
       2

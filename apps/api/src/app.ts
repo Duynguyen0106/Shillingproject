@@ -185,15 +185,44 @@ async function notifyMissionCreated(
   await dispatchAlert(baseMsg);
 }
 
-async function createTrackedLink(prisma: PrismaClient, communityId: string, missionId: string) {
+async function createTrackedLink(prisma: PrismaClient, communityId: string, missionId: string, userId?: string) {
   return prisma.shortLink.create({
     data: {
       communityId,
       missionId,
+      userId,
       targetUrl: `${appUrl}/app/missions/${missionId}`,
       code: nanoid(8)
     }
   });
+}
+
+async function ensureContributorLink(
+  prisma: PrismaClient,
+  mission: { id: string; communityId: string },
+  userId: string
+) {
+  const existing = await prisma.shortLink.findFirst({
+    where: { missionId: mission.id, userId },
+    include: { _count: { select: { clicks: true } } }
+  });
+  if (existing) {
+    return {
+      id: existing.id,
+      code: existing.code,
+      targetUrl: existing.targetUrl,
+      missionId: existing.missionId,
+      clicks: existing._count.clicks
+    };
+  }
+  const created = await createTrackedLink(prisma, mission.communityId, mission.id, userId);
+  return {
+    id: created.id,
+    code: created.code,
+    targetUrl: created.targetUrl,
+    missionId: created.missionId,
+    clicks: 0
+  };
 }
 
 async function createMissionFromSignal(
@@ -302,7 +331,7 @@ export function createApp(prisma: PrismaClient) {
     if (!user) return res.status(404).json({ error: "User not found" });
     const communityId = String(req.query.communityId || process.env.DEMO_COMMUNITY_ID || "demo-community");
 
-    const [claims, submissions, scoreAgg, leaderboard] = await Promise.all([
+    const [claims, submissions, scoreAgg, leaderboard, links] = await Promise.all([
       prisma.missionClaim.findMany({
         where: { userId: user.id, mission: { communityId } },
         include: { mission: { select: { id: true, title: true, status: true, priority: true, urgency: true } } },
@@ -322,15 +351,28 @@ export function createApp(prisma: PrismaClient) {
         where: { communityId },
         _sum: { points: true },
         orderBy: { _sum: { points: "desc" } }
+      }),
+      prisma.shortLink.findMany({
+        where: { userId: user.id, communityId },
+        include: { _count: { select: { clicks: true } }, mission: { select: { title: true } } },
+        orderBy: { createdAt: "desc" }
       })
     ]);
 
     const rankIndex = leaderboard.findIndex((row) => row.userId === user.id);
+    const trackedLinks = links.map((link) => ({
+      code: link.code,
+      targetUrl: link.targetUrl,
+      missionId: link.missionId,
+      missionTitle: link.mission?.title ?? null,
+      clicks: link._count.clicks
+    }));
     res.json({
       ...user,
       communityId,
       points: scoreAgg._sum.points ?? 0,
       rank: rankIndex >= 0 ? rankIndex + 1 : null,
+      clicks: trackedLinks.reduce((sum, link) => sum + link.clicks, 0),
       claimedMissionIds: claims.map((claim) => claim.missionId),
       claims: claims.map((claim) => ({
         missionId: claim.mission.id,
@@ -349,7 +391,8 @@ export function createApp(prisma: PrismaClient) {
         pointsAwarded: submission.pointsAwarded,
         isVerified: submission.isVerified,
         submittedAt: submission.submittedAt
-      }))
+      })),
+      links: trackedLinks
     });
   }));
 
@@ -408,7 +451,7 @@ export function createApp(prisma: PrismaClient) {
       where: { communityId: req.params.id, status: status ? (status as MissionStatus) : MissionStatus.ACTIVE },
       include: {
         tasks: true,
-        shortLinks: { include: { _count: { select: { clicks: true } } } },
+        shortLinks: { where: { userId: null }, include: { _count: { select: { clicks: true } } } },
         _count: { select: { claims: true } }
       },
       orderBy: { createdAt: "desc" }
@@ -446,7 +489,7 @@ export function createApp(prisma: PrismaClient) {
           }
         },
         signal: true,
-        shortLinks: { include: { _count: { select: { clicks: true } } } },
+        shortLinks: { where: { userId: null }, include: { _count: { select: { clicks: true } } } },
         claims: {
           include: { user: { select: { wallet: true, displayName: true } } },
           orderBy: { claimedAt: "desc" }
@@ -474,7 +517,8 @@ export function createApp(prisma: PrismaClient) {
       update: {},
       create: { missionId: mission.id, userId: user.id }
     });
-    res.json({ missionId: mission.id, claimed: true, claim });
+    const shortLink = await ensureContributorLink(prisma, mission, user.id);
+    res.json({ missionId: mission.id, claimed: true, claim, shortLink });
   }));
 
   app.post("/missions/:id/complete", asyncRoute(async (req, res) => {
@@ -570,10 +614,20 @@ export function createApp(prisma: PrismaClient) {
   app.get("/communities/:id/attribution", asyncRoute(async (req, res) => {
     const links = await prisma.shortLink.findMany({
       where: { communityId: req.params.id },
-      include: { _count: { select: { clicks: true } } },
+      include: {
+        _count: { select: { clicks: true } },
+        user: { select: { wallet: true, displayName: true } }
+      },
       orderBy: { createdAt: "desc" }
     });
-    res.json(links.map((l) => ({ code: l.code, targetUrl: l.targetUrl, clicks: l._count.clicks, missionId: l.missionId })));
+    res.json(links.map((l) => ({
+      code: l.code,
+      targetUrl: l.targetUrl,
+      clicks: l._count.clicks,
+      missionId: l.missionId,
+      wallet: l.user?.wallet ?? null,
+      displayName: l.user?.displayName ?? null
+    })));
   }));
 
   app.post("/notifications/telegram/test", asyncRoute(async (_req, res) => {

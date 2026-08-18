@@ -25,6 +25,14 @@ export type ContributorSubmission = {
   submittedAt: string;
 };
 
+export type ContributorLink = {
+  code: string;
+  targetUrl: string;
+  missionId: string | null;
+  missionTitle: string | null;
+  clicks: number;
+};
+
 export type ContributorProfile = {
   id: string;
   wallet: string;
@@ -32,9 +40,11 @@ export type ContributorProfile = {
   communityId: string;
   points: number;
   rank: number | null;
+  clicks?: number;
   claimedMissionIds: string[];
   claims: ContributorClaim[];
   submissions: ContributorSubmission[];
+  links?: ContributorLink[];
 };
 
 export function useContributorProfile() {

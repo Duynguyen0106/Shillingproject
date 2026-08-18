@@ -3,7 +3,7 @@
 ## Auth / User
 - POST `/auth/siwe/start` `{ wallet }` → nonce + SIWE message bound to that address
 - POST `/auth/siwe/verify` `{ message, signature }` → recovers address, returns session token
-- GET `/me` with `Authorization: Bearer <token>` or `?wallet=` — includes points, rank, claims, and submissions for `?communityId=`
+- GET `/me` with `Authorization: Bearer <token>` or `?wallet=` — includes points, rank, claims, submissions, and personal tracked links for `?communityId=`
 
 ## Community
 - POST `/communities`
@@ -16,7 +16,7 @@
 - POST `/signals/:id/create-mission`
 - GET `/communities/:id/missions?status=active`
 - GET `/missions/:id`
-- POST `/missions/:id/claim` `{ wallet? }` — SIWE Bearer token overrides body wallet
+- POST `/missions/:id/claim` `{ wallet? }` — SIWE Bearer token overrides body wallet; issues a personal tracked CTA
 - POST `/missions/:id/complete`
 
 ## Submissions / Scoring
@@ -27,7 +27,7 @@
 ## Attribution
 - POST `/links`
 - GET `/r/:code` (redirect + click logging)
-- GET `/communities/:id/attribution`
+- GET `/communities/:id/attribution` — click counts, optional `wallet` when the link is a contributor CTA
 
 ## Notifications
 - POST `/notifications/telegram/test`

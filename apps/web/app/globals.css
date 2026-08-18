@@ -168,3 +168,10 @@ label {
   font-size: 28px;
   margin-top: 4px;
 }
+.tracked-cta {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}

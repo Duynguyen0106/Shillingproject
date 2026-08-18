@@ -75,13 +75,26 @@ async function main() {
     create: { missionId: mission.id, userId: user.id }
   });
 
-  const existingLink = await prisma.shortLink.findFirst({ where: { missionId: mission.id } });
-  if (!existingLink) {
+  const communityLink = await prisma.shortLink.findFirst({ where: { missionId: mission.id, userId: null } });
+  if (!communityLink) {
     await prisma.shortLink.create({
       data: {
         communityId: community.id,
         missionId: mission.id,
         code: "democta1",
+        targetUrl: `${appUrl}/app/missions/${mission.id}`
+      }
+    });
+  }
+
+  const raiderLink = await prisma.shortLink.findFirst({ where: { missionId: mission.id, userId: user.id } });
+  if (!raiderLink) {
+    await prisma.shortLink.create({
+      data: {
+        communityId: community.id,
+        missionId: mission.id,
+        userId: user.id,
+        code: "raidcta1",
         targetUrl: `${appUrl}/app/missions/${mission.id}`
       }
     });

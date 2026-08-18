@@ -49,6 +49,7 @@ model User {
   submissions  Submission[]
   scores       Score[]
   claims       MissionClaim[]
+  shortLinks   ShortLink[]
 }
 
 model Community {
@@ -179,12 +180,17 @@ model ShortLink {
   id          String   @id @default(cuid())
   communityId String
   missionId   String?
+  userId      String?
   code        String   @unique
   targetUrl   String
   createdAt   DateTime @default(now())
   community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
   mission     Mission?  @relation(fields: [missionId], references: [id], onDelete: SetNull)
+  user        User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
   clicks      ShortLinkClick[]
+
+  @@index([userId])
+  @@index([missionId, userId])
 }
 
 model ShortLinkClick {

@@ -1,6 +1,7 @@
 "use client";
 
 import ConnectWalletButton from "../../ConnectWalletButton";
+import CopyLink from "../../CopyLink";
 import Link from "next/link";
 import { useContributorProfile } from "../../../lib/useContributorProfile";
 import { shortAddress } from "../../../lib/session";
@@ -48,6 +49,10 @@ export default function MyOpsPage() {
           <span className="muted">Proofs</span>
           <strong>{profile?.submissions.length ?? 0}</strong>
         </div>
+        <div className="stat">
+          <span className="muted">Clicks</span>
+          <strong>{profile?.clicks ?? 0}</strong>
+        </div>
       </div>
       <p>
         <Link href="/app/leaderboard">Open leaderboard</Link>
@@ -59,14 +64,30 @@ export default function MyOpsPage() {
           <Link href="/app">Go to the mission board</Link>
         </div>
       )}
-      {profile?.claims.map((claim) => (
-        <div key={claim.missionId} className="card">
-          <h3>{claim.title}</h3>
-          <div className="row">
-            <span className={`badge ${claim.priority === "HIGH" ? "high" : ""}`}>{claim.priority}</span>
-            <span>Status: {claim.status}</span>
-            <Link href={`/app/missions/${claim.missionId}`}>Open mission</Link>
+      {profile?.claims.map((claim) => {
+        const link = profile.links?.find((item) => item.missionId === claim.missionId);
+        return (
+          <div key={claim.missionId} className="card">
+            <h3>{claim.title}</h3>
+            <div className="row">
+              <span className={`badge ${claim.priority === "HIGH" ? "high" : ""}`}>{claim.priority}</span>
+              <span>Status: {claim.status}</span>
+              <Link href={`/app/missions/${claim.missionId}`}>Open mission</Link>
+            </div>
+            {link && <CopyLink code={link.code} clicks={link.clicks} />}
           </div>
+        );
+      })}
+      <h2>Tracked CTAs</h2>
+      {(profile?.links?.length ?? 0) === 0 && (
+        <div className="card">
+          <p className="muted">Claim a mission to get a unique short link. Clicks on that link count as your impact.</p>
+        </div>
+      )}
+      {profile?.links?.map((link) => (
+        <div key={link.code} className="card">
+          <strong>{link.missionTitle || "Tracked link"}</strong>
+          <CopyLink code={link.code} clicks={link.clicks} />
         </div>
       ))}
       <h2>Scored submissions</h2>
