@@ -2,6 +2,7 @@ import request from "supertest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ActionType, Priority, SignalType } from "@prisma/client";
 import { createApp, scoreSubmission, buildMissionAlertMessage, buildShareCopy, missionTtlMs } from "./app";
+import { subscribeLiveFeed } from "./livefeed";
 
 describe("API validation and health", () => {
   const app = createApp({} as never);
@@ -1357,5 +1358,69 @@ describe("raid feed", () => {
     const res = await request(app).post("/communities/demo-community/feed/refresh").send({ wallet: "0xraid" });
     expect(res.status).toBe(200);
     expect(res.body.provider).toBe("none");
+  });
+
+  it("returns only posts ingested after since so clients can poll without reload", async () => {
+    const app = createApp({
+      community: { findUnique: vi.fn().mockResolvedValue({ id: "demo-community", ticker: "PEPE" }) },
+      feedPost: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: "old", authorHandle: "whale", kind: "KOL_POST", createdAt: new Date("2026-08-19T00:00:00.000Z"), postedAt: new Date("2026-08-19T00:00:00.000Z"), likeCount: 0, replyCount: 0, retweetCount: 0, quoteCount: 0, url: "https://x.com/whale/status/1" },
+          { id: "fresh", authorHandle: "whale", kind: "KOL_POST", createdAt: new Date("2026-08-19T00:10:00.000Z"), postedAt: new Date("2026-08-19T00:10:00.000Z"), likeCount: 0, replyCount: 0, retweetCount: 0, quoteCount: 0, url: "https://x.com/whale/status/2" }
+        ])
+      },
+      kolWatch: { findMany: vi.fn().mockResolvedValue([]) }
+    } as never);
+    const res = await request(app).get("/communities/demo-community/feed?since=2026-08-19T00:05:00.000Z");
+    expect(res.status).toBe(200);
+    expect(res.body.live).toBe(true);
+    expect(res.body.posts.map((post: { id: string }) => post.id)).toEqual(["fresh"]);
+  });
+
+  it("publishes a newly ingested KOL post to live subscribers", async () => {
+    const created = {
+      id: "p-live",
+      kind: "KOL_POST",
+      url: "https://x.com/whale/status/99",
+      authorHandle: "whale",
+      text: "gm raiders",
+      postedAt: new Date(),
+      createdAt: new Date(),
+      likeCount: 0,
+      replyCount: 0,
+      retweetCount: 0,
+      quoteCount: 0,
+      viewCount: 0,
+      authorFollowers: 90000
+    };
+    const app = createApp({
+      community: { findUnique: vi.fn().mockResolvedValue({ id: "demo-community", ticker: "PEPE", contractAddress: null }) },
+      feedPost: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockResolvedValue(created)
+      },
+      kolWatch: {
+        findUnique: vi.fn(),
+        findFirst: vi.fn().mockResolvedValue({
+          handle: "whale",
+          displayName: "Whale",
+          followers: 90000,
+          verified: true,
+          profileImageUrl: "https://img/whale.jpg"
+        })
+      }
+    } as never);
+    const seen: Array<{ id: string; followers?: number | null }> = [];
+    const stop = subscribeLiveFeed("demo-community", (event) => {
+      seen.push({ id: event.post.id, followers: event.kol?.followers });
+    });
+    const res = await request(app).post("/communities/demo-community/feed/posts").send({
+      url: "https://x.com/whale/status/99",
+      text: "gm raiders",
+      authorHandle: "whale"
+    });
+    stop();
+    expect(res.status).toBe(200);
+    expect(seen).toEqual([{ id: "p-live", followers: 90000 }]);
   });
 });

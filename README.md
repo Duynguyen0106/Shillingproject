@@ -46,7 +46,7 @@ From the UI:
 
 1. Paste a DexScreener URL or token contract on `/` (demo PEPE: `0x6982508145454ce325ddbe47a25d4ec3d2311933`).
 2. Open the contract hub and join the community bound to that mint.
-3. Open `/app/feed`. The CTO lead watches KOL handles. With an X API key the feed pulls live posts and ticker/CA mentions. Click **Shill this** to open that post on X.
+3. Open `/app/feed`. The CTO lead watches KOL handles. With an X API key the feed pulls live posts and ticker/CA mentions; new posts popup in the app with KOL info so members do not reload. Click **Shill this** to open that post on X.
 4. Mentions notify Telegram/Discord so the whole room piles on that URL. Claimed raids still score on the mission board.
 5. Unique clicks on your personal CTA award points. Confirm on `/app/me` and `/app/leaderboard`.
 

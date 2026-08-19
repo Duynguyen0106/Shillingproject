@@ -243,3 +243,59 @@ label {
   justify-content: center;
   flex-shrink: 0;
 }
+.live-toasts {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(360px, calc(100vw - 32px));
+}
+.live-toast {
+  display: flex;
+  gap: 10px;
+  background: #18181b;
+  border: 1px solid #f97316;
+  border-radius: 12px;
+  padding: 12px;
+  box-shadow: 0 12px 40px #00000088;
+  animation: live-in 220ms ease-out;
+}
+.live-toast p {
+  margin: 6px 0 10px;
+}
+.live-toast small {
+  color: #a1a1aa;
+}
+.card.live-new {
+  border-color: #f97316;
+  animation: live-in 220ms ease-out;
+}
+.live-dot {
+  display: inline-flex;
+  min-width: 18px;
+  height: 18px;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #ea580c;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+@keyframes live-in {
+  from { transform: translateY(12px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}

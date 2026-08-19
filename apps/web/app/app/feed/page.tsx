@@ -5,6 +5,7 @@ import Link from "next/link";
 import ConnectWalletButton from "../../ConnectWalletButton";
 import { API_BASE } from "../../../lib/config";
 import { getStoredCommunityId } from "../../../lib/community";
+import { LIVE_POST_EVENT, compactCount, type LiveFeedEvent, type LiveKol } from "../../../lib/liveFeed";
 import { authHeaders, getStoredWallet, notifyOps } from "../../../lib/session";
 import { useConnectedWallet } from "../../../lib/useConnectedWallet";
 
@@ -23,8 +24,10 @@ type FeedPost = {
   viewCount?: number;
   heat?: number;
   postedAt: string;
+  createdAt?: string;
   missionId?: string | null;
   mission?: { id: string; status: string; title: string } | null;
+  kol?: LiveKol | null;
 };
 
 type KolWatch = {
@@ -59,10 +62,7 @@ function timeAgo(value: string): string {
 }
 
 function compact(value?: number | null): string {
-  const n = value ?? 0;
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return String(n);
+  return compactCount(value);
 }
 
 export default function RaidFeedPage() {
@@ -77,6 +77,15 @@ export default function RaidFeedPage() {
   const [minEngagement, setMinEngagement] = useState(0);
   const [sort, setSort] = useState<"new" | "hot">("new");
   const [busy, setBusy] = useState(false);
+  const [freshIds, setFreshIds] = useState<string[]>([]);
+
+  const markFresh = useCallback((ids: string[]) => {
+    if (ids.length === 0) return;
+    setFreshIds((current) => [...ids, ...current.filter((id) => !ids.includes(id))].slice(0, 20));
+    window.setTimeout(() => {
+      setFreshIds((current) => current.filter((id) => !ids.includes(id)));
+    }, 12_000);
+  }, []);
 
   const load = useCallback(async () => {
     const communityId = getStoredCommunityId();
@@ -99,13 +108,31 @@ export default function RaidFeedPage() {
 
   useEffect(() => {
     void load();
-    const timer = window.setInterval(() => void load(), 20_000);
+    const timer = window.setInterval(() => void load(), 8_000);
     window.addEventListener("shillops-community", load);
     return () => {
       window.clearInterval(timer);
       window.removeEventListener("shillops-community", load);
     };
   }, [load]);
+
+  useEffect(() => {
+    const onLive = (message: Event) => {
+      const event = (message as CustomEvent<LiveFeedEvent>).detail;
+      if (!event?.post || event.communityId !== getStoredCommunityId()) return;
+      setFeed((current) => {
+        if (!current) return current;
+        if (current.posts.some((post) => post.id === event.post.id)) return current;
+        if (kolFilter && event.post.authorHandle !== kolFilter) return current;
+        if (kind !== "all" && event.post.kind !== kind) return current;
+        const post = { ...event.post, kol: event.kol, kind: event.post.kind === "MENTION" ? "MENTION" : "KOL_POST" } as FeedPost;
+        return { ...current, posts: [post, ...current.posts].slice(0, 50) };
+      });
+      markFresh([event.post.id]);
+    };
+    window.addEventListener(LIVE_POST_EVENT, onLive);
+    return () => window.removeEventListener(LIVE_POST_EVENT, onLive);
+  }, [kolFilter, kind, markFresh]);
 
   async function addKol() {
     if (!wallet) return;
@@ -189,7 +216,7 @@ export default function RaidFeedPage() {
       <div className="kicker">Do not hunt on X</div>
       <h1>Raid Feed</h1>
       <p className="muted">
-        Filter KOLs by followers and post interaction, then click a post to shill it. Mentions of the ticker or CA still notify the whole room.
+        New KOL posts pop in live — no reload. Filter by followers and interaction, then shill the post.
       </p>
       {feed && (
         <div className="row">
@@ -198,6 +225,7 @@ export default function RaidFeedPage() {
           <span className={`badge ${feed.provider === "none" ? "caution" : "ok"}`}>
             {feed.provider === "none" ? "Live X off" : `Live via ${feed.provider}`}
           </span>
+          <span className="badge ok">Popups on</span>
         </div>
       )}
       {feed?.provider === "none" && (
@@ -316,18 +344,26 @@ export default function RaidFeedPage() {
           <p>No posts match these filters. Watch KOLs, pull live, or loosen followers/interaction.</p>
         </div>
       )}
-      {feed?.posts.map((post) => (
-        <div key={post.id} className={`card${post.kind === "MENTION" ? " next-play" : ""}`}>
+      {feed?.posts.map((post) => {
+        const kol = post.kol ?? feed.kols.find((item) => item.handle === post.authorHandle) ?? null;
+        return (
+        <div key={post.id} className={`card${post.kind === "MENTION" ? " next-play" : ""}${freshIds.includes(post.id) ? " live-new" : ""}`}>
           <div className="row">
+            {kol?.profileImageUrl
+              ? <img src={kol.profileImageUrl} alt="" className="kol-avatar" />
+              : <span className="kol-avatar fallback">@{post.authorHandle.slice(0, 1)}</span>}
             <span className={`badge ${post.kind === "MENTION" ? "high" : "ok"}`}>
               {post.kind === "MENTION" ? "Mention" : "KOL"}
             </span>
+            {freshIds.includes(post.id) && <span className="badge high">New</span>}
             <strong>@{post.authorHandle}</strong>
-            {typeof post.authorFollowers === "number" && post.authorFollowers > 0 && (
-              <span className="muted">{compact(post.authorFollowers)} followers</span>
+            {kol?.verified && <span className="badge ok">Verified</span>}
+            {typeof (kol?.followers ?? post.authorFollowers) === "number" && (kol?.followers ?? post.authorFollowers ?? 0) > 0 && (
+              <span className="muted">{compact(kol?.followers ?? post.authorFollowers)} followers</span>
             )}
             <span className="muted">{timeAgo(post.postedAt)}</span>
           </div>
+          {kol?.displayName && <p className="muted">{kol.displayName}{kol.bio ? ` · ${kol.bio}` : ""}</p>}
           <p>{post.text}</p>
           <p className="muted">
             {compact(post.likeCount)} likes · {compact(post.replyCount)} replies · {compact(post.retweetCount)} reposts · {compact(post.quoteCount)} quotes · {compact(post.viewCount)} views
@@ -340,7 +376,8 @@ export default function RaidFeedPage() {
             {post.missionId && <Link href={`/app/missions/${post.missionId}`}>Mission</Link>}
           </div>
         </div>
-      ))}
+        );
+      })}
       {status && <p>{status}</p>}
     </main>
   );

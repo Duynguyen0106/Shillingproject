@@ -1,5 +1,7 @@
 import ConnectWalletButton from "./ConnectWalletButton";
 import CommunityBanner from "./CommunityBanner";
+import LiveFeedToasts from "./LiveFeedToasts";
+import NavFeedLink from "./NavFeedLink";
 import "./globals.css";
 import Link from "next/link";
 import type { ReactNode } from "react";
@@ -10,7 +12,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body>
         <nav className="nav">
           <Link href="/" className="brand">Shill Ops</Link>
-          <Link href="/app/feed">Feed</Link>
+          <NavFeedLink />
           <Link href="/app">Missions</Link>
           <Link href="/app/me">My Ops</Link>
           <Link href="/app/leaderboard">Leaderboard</Link>
@@ -21,6 +23,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         </nav>
         <CommunityBanner />
         {children}
+        <LiveFeedToasts />
       </body>
     </html>
   );

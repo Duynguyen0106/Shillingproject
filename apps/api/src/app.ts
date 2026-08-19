@@ -28,6 +28,7 @@ import {
   type CanonicalToken
 } from "./dexscreener";
 import { ingestNormalizedPost, kolProfileData, parseWatchHandle, refreshAllCommunityFeeds, refreshCommunityFeed } from "./feed";
+import { liveListenerCount, postsCreatedSince, snapshotKol, subscribeLiveFeed } from "./livefeed";
 import { applyFeedFilters, applyKolFilters, attachKolStats, configuredFeedProvider, fetchUserProfile, mentionMatches, parseXHandle, parseXStatusUrl, postHeat } from "./xfeed";
 
 const appUrl = process.env.APP_URL || "http://localhost:3000";
@@ -119,7 +120,8 @@ const feedQuerySchema = z.object({
   kind: z.enum(["KOL_POST", "MENTION"]).optional(),
   minFollowers: z.coerce.number().int().min(0).optional(),
   minEngagement: z.coerce.number().int().min(0).optional(),
-  sort: z.enum(["new", "hot"]).optional()
+  sort: z.enum(["new", "hot"]).optional(),
+  since: z.string().optional()
 });
 
 const feedPostSchema = z.object({
@@ -1118,8 +1120,10 @@ export function createApp(prisma: PrismaClient) {
       kind: req.query.kind === "KOL_POST" || req.query.kind === "MENTION" ? req.query.kind : undefined,
       minFollowers: req.query.minFollowers ? Number(req.query.minFollowers) : undefined,
       minEngagement: req.query.minEngagement ? Number(req.query.minEngagement) : undefined,
-      sort: req.query.sort === "hot" || req.query.sort === "new" ? req.query.sort : undefined
+      sort: req.query.sort === "hot" || req.query.sort === "new" ? req.query.sort : undefined,
+      since: typeof req.query.since === "string" && req.query.since ? req.query.since : undefined
     });
+    const since = filters.since ? new Date(filters.since) : null;
     const [rawPosts, rawKols] = await Promise.all([
       prisma.feedPost?.findMany?.({
         where: { communityId: community.id },
@@ -1132,9 +1136,11 @@ export function createApp(prisma: PrismaClient) {
         include: { _count: { select: { posts: true } } }
       }) ?? []
     ]);
-    const posts = applyFeedFilters(rawPosts, filters).slice(0, 50).map((post) => ({
+    const fresh = postsCreatedSince(rawPosts, since && !Number.isNaN(since.getTime()) ? since : null);
+    const posts = applyFeedFilters(fresh, filters).slice(0, 50).map((post) => ({
       ...post,
-      heat: postHeat(post)
+      heat: postHeat(post),
+      kol: snapshotKol(post.kolWatch ?? rawKols.find((kol) => kol.handle === post.authorHandle))
     }));
     const kols = applyKolFilters(attachKolStats(rawKols, rawPosts), filters)
       .sort((a, b) => (b.followers ?? -1) - (a.followers ?? -1));
@@ -1143,10 +1149,42 @@ export function createApp(prisma: PrismaClient) {
       ticker: community.ticker,
       contractAddress: community.contractAddress,
       filters,
+      serverTime: new Date().toISOString(),
+      live: true,
       kols,
       posts
     });
   }));
+
+  app.get("/communities/:id/feed/live", (req, res) => {
+    void (async () => {
+      const community = await prisma.community.findUnique({ where: { id: req.params.id } });
+      if (!community) {
+        res.status(404).json({ error: "Community not found" });
+        return;
+      }
+      res.status(200);
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("Connection", "keep-alive");
+      res.setHeader("X-Accel-Buffering", "no");
+      if (typeof res.flushHeaders === "function") res.flushHeaders();
+      res.write(`event: hello\ndata: ${JSON.stringify({ ok: true, communityId: community.id, listeners: liveListenerCount(community.id) + 1 })}\n\n`);
+      const send = (event: { type: string }) => {
+        res.write(`event: post\ndata: ${JSON.stringify(event)}\n\n`);
+      };
+      const unsub = subscribeLiveFeed(community.id, send);
+      const ping = setInterval(() => {
+        res.write(`: ping\n\n`);
+      }, 20_000);
+      req.on("close", () => {
+        clearInterval(ping);
+        unsub();
+      });
+    })().catch(() => {
+      if (!res.headersSent) res.status(500).json({ error: "Live feed failed" });
+    });
+  });
 
   app.post("/communities/:id/kols", asyncRoute(async (req, res) => {
     const { wallet: bodyWallet, handle: rawHandle } = kolWatchSchema.parse(req.body ?? {});

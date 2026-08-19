@@ -1,4 +1,5 @@
 import { FeedPostKind, PrismaClient, SignalType } from "@prisma/client";
+import { publishLivePost, toLiveFeedEvent } from "./livefeed";
 import {
   configuredFeedProvider,
   fetchHandleTweets,
@@ -81,7 +82,40 @@ export async function ingestNormalizedPost(
       ...postMetrics(post)
     }
   });
+  await announceNewPost(prisma, community.id, created).catch(() => undefined);
   return { post: created, created: true as const };
+}
+
+async function announceNewPost(
+  prisma: PrismaClient,
+  communityId: string,
+  post: {
+    id: string;
+    kind: string;
+    url: string;
+    authorHandle: string;
+    authorName?: string | null;
+    authorFollowers?: number | null;
+    text: string;
+    likeCount?: number | null;
+    replyCount?: number | null;
+    retweetCount?: number | null;
+    quoteCount?: number | null;
+    viewCount?: number | null;
+    postedAt: Date;
+    createdAt?: Date | null;
+    missionId?: string | null;
+    kolWatchId?: string | null;
+  }
+) {
+  let kol = null;
+  if (post.kolWatchId) {
+    kol = await prisma.kolWatch?.findUnique?.({ where: { id: post.kolWatchId } }) ?? null;
+  }
+  if (!kol) {
+    kol = await prisma.kolWatch?.findFirst?.({ where: { communityId, handle: post.authorHandle } }) ?? null;
+  }
+  publishLivePost(toLiveFeedEvent(communityId, post, kol));
 }
 
 export async function refreshCommunityFeed(prisma: PrismaClient, communityId: string, hooks?: FeedHooks) {
