@@ -182,6 +182,43 @@ export function liveListenerCount(communityId: string): number {
   return listeners.get(communityId)?.size ?? 0;
 }
 
+// ── Global leaderboard bus ──────────────────────────────────────────────────
+// Carries lightweight community-level stat deltas to the cross-community
+// leaderboard SSE stream. Every shill, proof, focus-change, and join event
+// emits one of these so the leaderboard updates in real time.
+
+export type LeaderboardEvent = {
+  type: "shill" | "proof" | "focus" | "join" | "tick";
+  communityId: string;
+  ticker: string;
+  /** absolute counters — sent on every event so the client can replace, not diff */
+  shills24h: number;
+  memberCount: number;
+  activeMissions24h: number;
+  totalPoints: number;
+  focusRaidLive: boolean;
+  /** who did it (display only) */
+  actor?: { wallet: string; displayName: string | null } | null;
+  /** points awarded (proof events) */
+  pointsAwarded?: number;
+};
+
+type LeaderboardListener = (event: LeaderboardEvent) => void;
+const lbListeners = new Set<LeaderboardListener>();
+
+export function publishLeaderboardEvent(event: LeaderboardEvent) {
+  for (const listener of lbListeners) listener(event);
+}
+
+export function subscribeLeaderboard(listener: LeaderboardListener): () => void {
+  lbListeners.add(listener);
+  return () => lbListeners.delete(listener);
+}
+
+export function leaderboardListenerCount(): number {
+  return lbListeners.size;
+}
+
 export function postsCreatedSince<T extends { createdAt?: Date | string | null }>(posts: T[], since?: Date | null): T[] {
   if (!since || Number.isNaN(since.getTime())) return posts;
   const start = since.getTime();

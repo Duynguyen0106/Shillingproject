@@ -1650,22 +1650,23 @@ describe("raid feed", () => {
   it("records a first shill and refuses a duplicate unless reshill is set", async () => {
     const createShill = vi.fn().mockResolvedValue({ id: "s1" });
     const app = createApp({
-      community: { findUnique: vi.fn().mockResolvedValue({ id: "demo-community", ticker: "PEPE" }), update: vi.fn() },
+      community: { findUnique: vi.fn().mockResolvedValue({ id: "demo-community", ticker: "PEPE", focusAt: null }), update: vi.fn() },
       feedPost: { findUnique: vi.fn().mockResolvedValue({ id: "p1", communityId: "demo-community", url: "https://x.com/whale/status/1", kind: "KOL_POST", missionId: "m1", authorHandle: "whale", text: "gm" }) },
       user: { findUnique: vi.fn().mockResolvedValue({ id: "u1", wallet: "0xdemo" }) },
       communityMember: {
         findUnique: vi.fn().mockResolvedValue({ id: "mem1", userId: "u1", communityId: "demo-community" }),
-        updateMany: vi.fn()
+        updateMany: vi.fn(),
+        count: vi.fn().mockResolvedValue(10)
       },
-      mission: { findUnique: vi.fn().mockResolvedValue({ id: "m1", communityId: "demo-community" }) },
+      mission: { findUnique: vi.fn().mockResolvedValue({ id: "m1", communityId: "demo-community" }), count: vi.fn().mockResolvedValue(2) },
+      score: { aggregate: vi.fn().mockResolvedValue({ _sum: { points: 500 } }) },
       missionClaim: { upsert: vi.fn() },
       missionCheckIn: { upsert: vi.fn() },
       shortLink: { findFirst: vi.fn().mockResolvedValue({ id: "l1", code: "abc", targetUrl: "https://x.com", missionId: "m1", _count: { clicks: 0 } }) },
       feedShill: {
-        count: vi.fn()
-          .mockResolvedValueOnce(0)
-          .mockResolvedValueOnce(1)
-          .mockResolvedValueOnce(1),
+        count: vi.fn().mockResolvedValue(0)
+          .mockResolvedValueOnce(0)   // first shill: prior check
+          .mockResolvedValue(1),      // all subsequent calls (leaderboard snapshots + dup checks)
         findFirst: vi.fn().mockResolvedValue({ createdAt: "2026-08-19T01:00:00.000Z" }),
         findMany: vi.fn().mockResolvedValue([{ userId: "u1", createdAt: new Date() }]),
         create: createShill

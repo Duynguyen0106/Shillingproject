@@ -30,7 +30,7 @@ import {
   type CanonicalToken
 } from "./dexscreener";
 import { ingestNormalizedPost, kolProfileData, parseWatchHandle, refreshAllCommunityFeeds, refreshCommunityFeed } from "./feed";
-import { liveListenerCount, postsCreatedSince, publishLiveFocus, publishLiveProof, publishLiveRaid, snapshotKol, subscribeLiveFeed } from "./livefeed";
+import { liveListenerCount, postsCreatedSince, publishLiveFocus, publishLiveProof, publishLiveRaid, snapshotKol, subscribeLiveFeed, publishLeaderboardEvent, subscribeLeaderboard, leaderboardListenerCount, type LeaderboardEvent } from "./livefeed";
 import { attachShillState, serializeShillHistory } from "./shill";
 import { attachProofState, buildShillCopy, buildShillKit, liveRaiderIds, pickRaidReplyTask, proofIsReplyToRaidTarget, raidReplyAlreadyScored } from "./shillkit";
 import { isFocusLive, serializeFocus, focusChangeAllowed, shillAllowedDuringFocus } from "./focus";
@@ -906,6 +906,9 @@ async function setFocusRaid(
     by: { wallet: user.wallet, displayName: user.displayName ?? null }
   });
   publishLiveFocus({ type: "focus", communityId: community.id, focus });
+  // Publish leaderboard snapshot so focus-raid-live status updates instantly
+  void publishLeaderboardSnapshot(prisma, community.id, community.ticker, "focus",
+    { wallet: user.wallet, displayName: user.displayName ?? null });
   if (opts?.announce !== false) {
     await dispatchAlert(
       `🎯 Focus raid for ${community.ticker}\nEveryone reply to @${post.authorHandle}\n${post.url}\nFeed: ${appUrl}/app/feed`
@@ -1161,6 +1164,43 @@ async function scheduleReplyAutoScore(
     return;
   }
   await updateJob("FAILED", { failReason: "Reply not found within time window" });
+}
+
+async function publishLeaderboardSnapshot(
+  prisma: import("@prisma/client").PrismaClient,
+  communityId: string,
+  ticker: string,
+  type: LeaderboardEvent["type"],
+  actor?: LeaderboardEvent["actor"],
+  pointsAwarded?: number
+) {
+  try {
+    const since24h = new Date(Date.now() - 24 * 3600_000);
+    const since48h = new Date(Date.now() - 48 * 3600_000);
+    const [shills24hAgg, memberAgg, activeMissionsAgg, pointsAgg, community] = await Promise.all([
+      prisma.feedShill.count({ where: { communityId, createdAt: { gte: since24h } } }),
+      prisma.communityMember.count({ where: { communityId } }),
+      prisma.mission.count({ where: { communityId, createdAt: { gte: since48h } } }),
+      prisma.score.aggregate({ where: { communityId }, _sum: { points: true } }),
+      prisma.community.findUnique({ where: { id: communityId }, select: { focusAt: true } })
+    ]);
+    const focusRaidLive = Boolean(
+      community?.focusAt &&
+      Date.now() - new Date(community.focusAt).getTime() < 60 * 60_000
+    );
+    publishLeaderboardEvent({
+      type,
+      communityId,
+      ticker,
+      shills24h: shills24hAgg,
+      memberCount: memberAgg,
+      activeMissions24h: activeMissionsAgg,
+      totalPoints: pointsAgg._sum.points ?? 0,
+      focusRaidLive,
+      actor,
+      pointsAwarded
+    });
+  } catch { /* non-critical — never block the main request */ }
 }
 
 function isAdminWallet(wallet: string): boolean {
@@ -1625,6 +1665,11 @@ export function createApp(prisma: PrismaClient) {
       update: { lastActiveAt: new Date() },
       create: { userId: user.id, communityId: req.params.id, lastActiveAt: new Date() }
     });
+    const community = await prisma.community.findUnique({ where: { id: req.params.id }, select: { ticker: true } });
+    if (community) {
+      void publishLeaderboardSnapshot(prisma, req.params.id, community.ticker, "join",
+        { wallet, displayName: user.displayName ?? null });
+    }
     res.json({ ...member, lead: await loadLeadSeat(prisma, req.params.id) });
   }));
 
@@ -2083,6 +2128,9 @@ export function createApp(prisma: PrismaClient) {
       liveRaiderCount,
       raiderCount
     });
+    // Publish leaderboard snapshot so global leaderboard updates in real time
+    void publishLeaderboardSnapshot(prisma, community.id, community.ticker, "shill",
+      { wallet, displayName: user.displayName ?? null });
     await touchMemberActivity(prisma, user.id, community.id);
     const focus = prior === 0 && !isFocusLive(community)
       ? await setFocusRaid(prisma, community, post, user)
@@ -2271,6 +2319,9 @@ export function createApp(prisma: PrismaClient) {
       provedCount,
       liveProvedCount
     });
+    // Publish leaderboard snapshot so global leaderboard updates in real time
+    void publishLeaderboardSnapshot(prisma, community.id, community.ticker, "proof",
+      { wallet, displayName: user.displayName ?? null }, submission.pointsAwarded);
     // Streak + achievements (fire-and-forget)
     void touchStreak(prisma, user.id).then((streak) =>
       checkAndAwardAchievements(prisma, user.id, community.id, streak)
@@ -2679,6 +2730,31 @@ export function createApp(prisma: PrismaClient) {
       points: row._sum.points ?? 0
     })));
   }));
+
+  // ── Leaderboard live SSE stream ─────────────────────────────────────────
+  app.get("/communities/leaderboard/live", (req, res) => {
+    res.status(200);
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    if (typeof res.flushHeaders === "function") res.flushHeaders();
+
+    // Send initial ping
+    res.write(`event: hello\ndata: ${JSON.stringify({ ok: true, listeners: leaderboardListenerCount() + 1 })}\n\n`);
+
+    // Heartbeat every 25s to keep connection alive through proxies
+    const hb = setInterval(() => res.write(": heartbeat\n\n"), 25_000);
+
+    const unsub = subscribeLeaderboard((event) => {
+      res.write(`event: lb\ndata: ${JSON.stringify(event)}\n\n`);
+    });
+
+    req.on("close", () => {
+      clearInterval(hb);
+      unsub();
+    });
+  });
 
   app.post("/submissions/:id/verify", adminLimiter, asyncRoute(async (req, res) => {
     if (!requireAdmin(req, res)) return;
