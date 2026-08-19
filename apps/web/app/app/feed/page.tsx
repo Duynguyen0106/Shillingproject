@@ -11,6 +11,7 @@ import { copyText, FOCUS_EVENT, PROOF_EVENT, RAID_EVENT, clearFocus, runFocus, r
 import { useConnectedWallet } from "../../../lib/useConnectedWallet";
 import ProofPaste from "../../ProofPaste";
 import RaidScoreboard from "../../RaidScoreboard";
+import ShareOnX from "../../ShareOnX";
 
 type FeedPost = {
   id: string;
@@ -662,6 +663,9 @@ export default function RaidFeedPage() {
             )}
             {post.youShilled && <span className="badge ok">Already shilled</span>}
             {post.youProved && <span className="badge ok">Reply scored</span>}
+            {(post.youShilled || post.youProved) && feed?.ticker && (
+              <ShareOnX ticker={feed.ticker} action={post.youProved ? "proved a reply on" : "shilled"} />
+            )}
             {post.missionId && (
               <Link href={`/app/missions/${post.missionId}`}>{focused ? "Other plays" : "Mission"}</Link>
             )}

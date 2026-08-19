@@ -1355,3 +1355,90 @@ label {
 }
 .input:focus { border-color: var(--accent); }
 .input option { background: #0d0d14; }
+
+/* ──────────────────────────────────────────────────────────────────
+   DAILY QUEST
+───────────────────────────────────────────────────────────────────*/
+.daily-quest-card { display: flex; align-items: center; gap: 1rem; padding: 1.25rem; }
+.daily-quest-card.completed { opacity: 0.6; }
+.dq-icon { font-size: 2.5rem; flex-shrink: 0; }
+.dq-body { flex: 1; }
+.dq-type { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: #6c47ff; margin-bottom: 0.2rem; }
+.dq-description { font-size: 0.95rem; color: #e2e8f0; }
+.dq-bonus { font-size: 0.8rem; color: #22c55e; font-weight: 600; margin-top: 0.3rem; }
+.dq-done { font-size: 0.85rem; color: #22c55e; font-weight: 600; }
+.dq-btn { align-self: flex-start; }
+
+/* ──────────────────────────────────────────────────────────────────
+   SEASONS
+───────────────────────────────────────────────────────────────────*/
+.season-card { padding: 1rem 1.25rem; }
+.season-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.3rem; }
+.season-label { font-size: 1rem; font-weight: 700; color: #e2e8f0; }
+.season-status-badge.high { background: #6c47ff22; color: var(--accent); border: 1px solid var(--accent); }
+.season-lb-row { display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0; border-bottom: 1px solid #1e1e2e; }
+.season-lb-rank { font-size: 0.85rem; font-weight: 700; color: #64748b; width: 28px; }
+.season-lb-name { flex: 1; font-size: 0.9rem; color: #e2e8f0; }
+.season-lb-pts { font-size: 0.85rem; font-weight: 600; color: var(--accent); }
+
+/* ──────────────────────────────────────────────────────────────────
+   MISSION BUILDER
+───────────────────────────────────────────────────────────────────*/
+.mission-task-builder { padding: 1rem; margin-top: 0.75rem; }
+.mtb-header { display: flex; justify-content: space-between; align-items: center; font-weight: 600; margin-bottom: 0.75rem; }
+.form-row { display: flex; gap: 1rem; }
+
+/* ──────────────────────────────────────────────────────────────────
+   KOL MANAGER
+───────────────────────────────────────────────────────────────────*/
+.kol-card { padding: 1rem; }
+.kol-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem; }
+.kol-handle { font-weight: 700; color: #e2e8f0; }
+
+/* ──────────────────────────────────────────────────────────────────
+   ANNOUNCEMENT MANAGEMENT
+───────────────────────────────────────────────────────────────────*/
+.announcement-mgmt-card { padding: 1rem; }
+.ann-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.3rem; }
+.ann-pin { font-size: 0.8rem; color: #fb923c; font-weight: 600; }
+.ann-text { font-size: 0.9rem; color: #e2e8f0; white-space: pre-wrap; }
+.announcement-mgmt-card.pinned { border-color: #fb923c44; }
+
+/* ──────────────────────────────────────────────────────────────────
+   REDEMPTION CLAIM
+───────────────────────────────────────────────────────────────────*/
+.redeem-claim-card { padding: 1.25rem; }
+.claim-field { display: flex; justify-content: space-between; align-items: flex-start; padding: 0.5rem 0; border-bottom: 1px solid #1e1e2e; gap: 1rem; }
+.claim-label { font-size: 0.8rem; font-weight: 600; color: #94a3b8; min-width: 80px; flex-shrink: 0; }
+.claim-value { font-size: 0.85rem; color: #e2e8f0; word-break: break-all; text-align: right; }
+.mono-small { font-family: monospace; font-size: 0.75rem; }
+.redeem-steps { padding-left: 1.2rem; color: #94a3b8; font-size: 0.85rem; line-height: 1.8; }
+.redeem-steps code { background: #13131a; padding: 0.1rem 0.4rem; border-radius: 4px; font-size: 0.8rem; color: var(--accent); }
+
+/* ──────────────────────────────────────────────────────────────────
+   SHARE ON X
+───────────────────────────────────────────────────────────────────*/
+.share-on-x-btn { background: #000; color: #fff; font-weight: 700; }
+.share-on-x-btn:hover { background: #1a1a1a; }
+
+/* ──────────────────────────────────────────────────────────────────
+   PUSH OPT-IN
+───────────────────────────────────────────────────────────────────*/
+.push-opt-in {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #13131a;
+  border: 1px solid #1e1e2e;
+  border-radius: 10px;
+  padding: 0.6rem 1rem;
+  margin: 0.5rem 1rem;
+  font-size: 0.85rem;
+  gap: 1rem;
+}
+.push-opt-in-btn { padding: 0.3rem 0.8rem; font-size: 0.8rem; }
+
+/* ──────────────────────────────────────────────────────────────────
+   COMMUNITY SHARE CARD
+───────────────────────────────────────────────────────────────────*/
+.community-share-card { padding: 1.25rem; }

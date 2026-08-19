@@ -72,6 +72,9 @@ model User {
   announcements Announcement[] @relation("AnnouncementAuthor")
   referralsGiven  Referral[] @relation("ReferralReferrer")
   referralsReceived Referral[] @relation("ReferralReferee")
+  seasonSnapshots SeasonSnapshot[]
+  dailyQuestCompletions DailyQuestCompletion[]
+  redemptionClaims RedemptionClaim[]
 }
 
 model Community {
@@ -107,6 +110,10 @@ model Community {
   holderTiers      HolderTier[]
   alliancesInitiated AllianceRaid[] @relation("AllianceInitiator")
   alliancesReceived  AllianceRaid[] @relation("AlliancePartner")
+  seasons            Season[]
+  seasonSnapshots    SeasonSnapshot[]
+  dailyQuests        DailyQuest[]
+  redemptionClaims   RedemptionClaim[]
 
   @@unique([chainId, contractAddress])
 }
@@ -475,4 +482,80 @@ model AllianceRaid {
 
   @@index([initiatorCommunityId])
   @@index([partnerCommunityId])
+}
+
+model Season {
+  id          String   @id @default(cuid())
+  communityId String
+  label       String
+  startsAt    DateTime
+  endsAt      DateTime
+  status      String   @default("active") // active | ended
+  createdAt   DateTime @default(now())
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  snapshots   SeasonSnapshot[]
+
+  @@index([communityId, status])
+}
+
+model SeasonSnapshot {
+  id          String   @id @default(cuid())
+  seasonId    String
+  userId      String
+  communityId String
+  points      Int
+  rank        Int
+  createdAt   DateTime @default(now())
+  season      Season    @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@unique([seasonId, userId])
+  @@index([seasonId, rank])
+}
+
+model DailyQuest {
+  id          String   @id @default(cuid())
+  communityId String
+  date        String
+  questType   String
+  description String
+  pointBonus  Int      @default(25)
+  createdAt   DateTime @default(now())
+  completions DailyQuestCompletion[]
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@unique([communityId, date])
+  @@index([communityId, date])
+}
+
+model DailyQuestCompletion {
+  id          String   @id @default(cuid())
+  questId     String
+  userId      String
+  completedAt DateTime @default(now())
+  quest       DailyQuest @relation(fields: [questId], references: [id], onDelete: Cascade)
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([questId, userId])
+  @@index([userId])
+}
+
+model RedemptionClaim {
+  id          String   @id @default(cuid())
+  userId      String
+  communityId String
+  pointsBurned Int
+  amount      String
+  signature   String
+  nonce       String   @unique
+  claimedAt   DateTime?
+  txHash      String?
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@index([userId, communityId])
+  @@index([nonce])
 }

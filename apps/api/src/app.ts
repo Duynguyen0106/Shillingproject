@@ -3369,6 +3369,390 @@ export function createApp(prisma: PrismaClient) {
     res.json({ users, communities, shills24h, proofs24h, activeMembers24h });
   }));
 
+  // ══════════════════════════════════════════════════════════════════
+  // FEATURE SPRINT 3 — Daily Quests, Seasons, Redemption Claims, KOL Mgr, Missions Builder, Announcements
+  // ══════════════════════════════════════════════════════════════════
+
+  // ── Daily quest: get today's quest + completion status ──────────
+  app.get("/communities/:id/daily-quest", asyncRoute(async (req, res) => {
+    const wallet = walletFromAuth(req);
+    const today = new Date().toISOString().slice(0, 10);
+    let quest = await (prisma as any).dailyQuest.findUnique({
+      where: { communityId_date: { communityId: req.params.id, date: today } }
+    });
+    if (!quest) {
+      // Auto-generate today's quest
+      const types = ["shill", "proof", "focus", "checkin"] as const;
+      const questType = types[new Date().getDay() % types.length];
+      const descriptions: Record<string, string> = {
+        shill:   "Shill at least one post in the raid feed today",
+        proof:   "Submit verified proof on an active mission today",
+        focus:   "Participate in a focus raid",
+        checkin: "Check in to the app and view the feed"
+      };
+      quest = await (prisma as any).dailyQuest.create({
+        data: { communityId: req.params.id, date: today, questType, description: descriptions[questType], pointBonus: 25 }
+      });
+    }
+    let completed = false;
+    if (wallet) {
+      const user = await prisma.user.findUnique({ where: { wallet } });
+      if (user) {
+        const comp = await (prisma as any).dailyQuestCompletion.findUnique({
+          where: { questId_userId: { questId: quest.id, userId: user.id } }
+        });
+        completed = Boolean(comp);
+      }
+    }
+    res.json({ ...quest, completed });
+  }));
+
+  // ── Daily quest: complete / check-in ───────────────────────────
+  app.post("/communities/:id/daily-quest/complete", writeLimiter, asyncRoute(async (req, res) => {
+    const wallet = walletFromAuth(req);
+    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
+    const today = new Date().toISOString().slice(0, 10);
+    const quest = await (prisma as any).dailyQuest.findUnique({
+      where: { communityId_date: { communityId: req.params.id, date: today } }
+    });
+    if (!quest) return res.status(404).json({ error: "No quest today" });
+    const user = await prisma.user.findUnique({ where: { wallet } });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    const existing = await (prisma as any).dailyQuestCompletion.findUnique({
+      where: { questId_userId: { questId: quest.id, userId: user.id } }
+    });
+    if (existing) return res.status(409).json({ error: "Already completed today", alreadyDone: true });
+    await (prisma as any).dailyQuestCompletion.create({ data: { questId: quest.id, userId: user.id } });
+    await prisma.score.create({
+      data: { userId: user.id, communityId: req.params.id, points: quest.pointBonus, reason: `Daily quest: ${quest.description}` }
+    });
+    res.json({ ok: true, pointsAwarded: quest.pointBonus, quest });
+  }));
+
+  // ── Seasons: list ───────────────────────────────────────────────
+  app.get("/communities/:id/seasons", asyncRoute(async (req, res) => {
+    const seasons = await (prisma as any).season.findMany({
+      where: { communityId: req.params.id },
+      orderBy: { startsAt: "desc" },
+      take: 10
+    });
+    res.json(seasons);
+  }));
+
+  // ── Seasons: create (lead only) ─────────────────────────────────
+  app.post("/communities/:id/seasons", writeLimiter, asyncRoute(async (req, res) => {
+    const wallet = walletFromAuth(req);
+    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
+    const seat = await loadLeadSeat(prisma, req.params.id);
+    if (!seat.wallet || !sameWallet(seat.wallet, wallet)) {
+      if (!isAdminWallet(wallet)) return res.status(403).json({ error: "Only community lead can create seasons" });
+    }
+    const { label, startsAt, endsAt } = z.object({
+      label: z.string().min(1).max(60),
+      startsAt: z.string().datetime(),
+      endsAt: z.string().datetime()
+    }).parse(req.body);
+    const season = await (prisma as any).season.create({
+      data: { communityId: req.params.id, label, startsAt: new Date(startsAt), endsAt: new Date(endsAt) }
+    });
+    res.json(season);
+  }));
+
+  // ── Seasons: leaderboard snapshot ───────────────────────────────
+  app.get("/communities/:id/seasons/:seasonId/leaderboard", asyncRoute(async (req, res) => {
+    // Live: aggregate scores since season start
+    const season = await (prisma as any).season.findUnique({ where: { id: req.params.seasonId } });
+    if (!season || season.communityId !== req.params.id) return res.status(404).json({ error: "Season not found" });
+    const scores = await prisma.score.groupBy({
+      by: ["userId"],
+      where: { communityId: req.params.id, createdAt: { gte: new Date(season.startsAt), lte: new Date(season.endsAt) } },
+      _sum: { points: true },
+      orderBy: { _sum: { points: "desc" } },
+      take: 50
+    });
+    const userIds = scores.map((s: any) => s.userId);
+    const users = await prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, wallet: true, displayName: true } });
+    const userMap = Object.fromEntries(users.map((u) => [u.id, u]));
+    res.json({
+      season,
+      leaderboard: scores.map((s: any, i: number) => ({
+        rank: i + 1,
+        user: userMap[s.userId] || { wallet: s.userId, displayName: null },
+        points: s._sum.points ?? 0
+      }))
+    });
+  }));
+
+  // ── Seasons: end season + snapshot ──────────────────────────────
+  app.post("/communities/:id/seasons/:seasonId/end", writeLimiter, asyncRoute(async (req, res) => {
+    const wallet = walletFromAuth(req);
+    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
+    const seat = await loadLeadSeat(prisma, req.params.id);
+    if (!seat.wallet || !sameWallet(seat.wallet, wallet)) {
+      if (!isAdminWallet(wallet)) return res.status(403).json({ error: "Only community lead can end seasons" });
+    }
+    const season = await (prisma as any).season.findUnique({ where: { id: req.params.seasonId } });
+    if (!season || season.communityId !== req.params.id) return res.status(404).json({ error: "Season not found" });
+    const scores = await prisma.score.groupBy({
+      by: ["userId"],
+      where: { communityId: req.params.id, createdAt: { gte: new Date(season.startsAt), lte: new Date(season.endsAt) } },
+      _sum: { points: true },
+      orderBy: { _sum: { points: "desc" } }
+    });
+    await Promise.all(scores.map((s: any, i: number) =>
+      (prisma as any).seasonSnapshot.upsert({
+        where: { seasonId_userId: { seasonId: season.id, userId: s.userId } },
+        create: { seasonId: season.id, userId: s.userId, communityId: req.params.id, points: s._sum.points ?? 0, rank: i + 1 },
+        update: { points: s._sum.points ?? 0, rank: i + 1 }
+      })
+    ));
+    await (prisma as any).season.update({ where: { id: season.id }, data: { status: "ended" } });
+    res.json({ ok: true, snapshotCount: scores.length });
+  }));
+
+  // ── Redemption claim: generate ECDSA signature ──────────────────
+  app.post("/communities/:id/redemption-claim", writeLimiter, asyncRoute(async (req, res) => {
+    const wallet = walletFromAuth(req);
+    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
+    const { points } = z.object({ points: z.number().int().min(100) }).parse(req.body);
+    const user = await prisma.user.findUnique({ where: { wallet } });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    // Check user has enough points
+    const totalScore = await prisma.score.aggregate({ where: { userId: user.id, communityId: req.params.id }, _sum: { points: true } });
+    const available = totalScore._sum.points ?? 0;
+    if (available < points) return res.status(400).json({ error: `Not enough points. You have ${available}, need ${points}.` });
+    const community = await prisma.community.findUnique({ where: { id: req.params.id } });
+    if (!community) return res.status(404).json({ error: "Community not found" });
+    // Token amount: 1 point = 1 token (18 decimals string)
+    const amount = BigInt(points) * BigInt("1000000000000000000");
+    const nonce = nanoid(24);
+    const expiresAt = new Date(Date.now() + 24 * 3600_000);
+    // Sign: keccak256(wallet + communityId + amount + nonce) using CLAIM_SIGNER_KEY
+    const signerKey = process.env.CLAIM_SIGNER_KEY;
+    let signature = "0x" + "0".repeat(130); // placeholder when no key configured
+    if (signerKey) {
+      try {
+        const { ethers } = await import("ethers");
+        const signer = new ethers.Wallet(signerKey);
+        const msgHash = ethers.solidityPackedKeccak256(
+          ["address", "address", "uint256", "string"],
+          [wallet, community.contractAddress || ethers.ZeroAddress, amount.toString(), nonce]
+        );
+        signature = await signer.signMessage(ethers.getBytes(msgHash));
+      } catch { /* ethers not available, return placeholder */ }
+    }
+    const claim = await (prisma as any).redemptionClaim.create({
+      data: { userId: user.id, communityId: req.params.id, pointsBurned: points, amount: amount.toString(), signature, nonce, expiresAt }
+    });
+    // Deduct points
+    await prisma.score.create({
+      data: { userId: user.id, communityId: req.params.id, points: -points, reason: `Token redemption claim ${claim.id}` }
+    });
+    res.json({ claimId: claim.id, amount: amount.toString(), signature, nonce, expiresAt, contractAddress: community.contractAddress });
+  }));
+
+  // ── Redemption claim: mark as used (after on-chain tx) ──────────
+  app.post("/redemption-claims/:nonce/confirm", writeLimiter, asyncRoute(async (req, res) => {
+    const wallet = walletFromAuth(req);
+    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
+    const { txHash } = z.object({ txHash: z.string().min(1) }).parse(req.body);
+    const claim = await (prisma as any).redemptionClaim.findUnique({ where: { nonce: req.params.nonce } });
+    if (!claim) return res.status(404).json({ error: "Claim not found" });
+    const user = await prisma.user.findUnique({ where: { wallet } });
+    if (!user || claim.userId !== user.id) return res.status(403).json({ error: "Forbidden" });
+    if (claim.claimedAt) return res.status(409).json({ error: "Already confirmed" });
+    await (prisma as any).redemptionClaim.update({ where: { nonce: req.params.nonce }, data: { claimedAt: new Date(), txHash } });
+    res.json({ ok: true });
+  }));
+
+  // ── KOL watch manager: list / add / remove ───────────────────────
+  app.get("/communities/:id/kols/manage", asyncRoute(async (req, res) => {
+    const wallet = walletFromAuth(req);
+    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
+    const kols = await prisma.kolWatch.findMany({
+      where: { communityId: req.params.id },
+      orderBy: { createdAt: "desc" }
+    });
+    res.json(kols);
+  }));
+
+  app.post("/communities/:id/kols/manage", writeLimiter, asyncRoute(async (req, res) => {
+    const wallet = walletFromAuth(req);
+    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
+    const seat = await loadLeadSeat(prisma, req.params.id);
+    if (!seat.wallet || !sameWallet(seat.wallet, wallet)) {
+      if (!isAdminWallet(wallet)) return res.status(403).json({ error: "Only community lead can manage KOLs" });
+    }
+    const { handle, displayName } = z.object({
+      handle: z.string().min(1).max(60),
+      displayName: z.string().max(80).optional()
+    }).parse(req.body);
+    const cleanHandle = handle.replace(/^@/, "").toLowerCase();
+    const existing = await prisma.kolWatch.findUnique({ where: { communityId_handle: { communityId: req.params.id, handle: cleanHandle } } });
+    if (existing) return res.status(409).json({ error: "KOL already tracked", kol: existing });
+    const kol = await prisma.kolWatch.create({ data: { communityId: req.params.id, handle: cleanHandle, displayName: displayName || null } });
+    res.json(kol);
+  }));
+
+  app.delete("/communities/:id/kols/manage/:handle", writeLimiter, asyncRoute(async (req, res) => {
+    const wallet = walletFromAuth(req);
+    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
+    const seat = await loadLeadSeat(prisma, req.params.id);
+    if (!seat.wallet || !sameWallet(seat.wallet, wallet)) {
+      if (!isAdminWallet(wallet)) return res.status(403).json({ error: "Only community lead can manage KOLs" });
+    }
+    const handle = req.params.handle.toLowerCase();
+    await prisma.kolWatch.deleteMany({ where: { communityId: req.params.id, handle } });
+    res.json({ ok: true });
+  }));
+
+  // ── Mission builder: create mission ─────────────────────────────
+  app.post("/communities/:id/missions/create", writeLimiter, asyncRoute(async (req, res) => {
+    const wallet = walletFromAuth(req);
+    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
+    const member = await prisma.communityMember.findFirst({ where: { communityId: req.params.id, user: { wallet } } });
+    if (!member) return res.status(403).json({ error: "You must be a community member to create missions" });
+    const seat = await loadLeadSeat(prisma, req.params.id);
+    const isLead = seat.wallet ? sameWallet(seat.wallet, wallet) : false;
+    if (!isLead && !isAdminWallet(wallet)) return res.status(403).json({ error: "Only community lead can create missions" });
+    const body = z.object({
+      title: z.string().min(1).max(120),
+      description: z.string().max(2000).optional(),
+      priority: z.enum(["LOW", "MEDIUM", "HIGH"]).default("MEDIUM"),
+      targetXUrl: z.string().url().optional(),
+      endsAt: z.string().datetime().optional(),
+      tasks: z.array(z.object({
+        title: z.string().min(1).max(120),
+        description: z.string().max(1000).optional(),
+        actionType: z.enum(["REPLY", "SHARE", "BOOST", "INVITE"]),
+        platform: z.enum(["X", "TELEGRAM", "DISCORD"]).default("X"),
+        details: z.string().optional()
+      })).min(1).max(10)
+    }).parse(req.body);
+    const mission = await prisma.mission.create({
+      data: {
+        communityId: req.params.id,
+        title: body.title,
+        description: body.description || "",
+        priority: body.priority as any,
+        status: "ACTIVE",
+        urgency: body.priority === "HIGH" ? 80 : body.priority === "LOW" ? 20 : 50,
+        tasks: {
+          create: body.tasks.map((t) => ({
+            title: t.title,
+            description: t.description,
+            actionType: t.actionType as any,
+            platform: t.platform as any,
+            details: t.details,
+            pointValue: t.actionType === "REPLY" ? 50 : t.actionType === "SHARE" ? 30 : 20
+          }))
+        }
+      },
+      include: { tasks: true }
+    });
+    // If targetXUrl provided, create a feed post for it
+    if (body.targetXUrl) {
+      const parsed = parseXStatusUrl(body.targetXUrl);
+      if (parsed) {
+        await prisma.feedPost.upsert({
+          where: { communityId_url: { communityId: req.params.id, url: body.targetXUrl } },
+          create: {
+            communityId: req.params.id, url: body.targetXUrl, kind: "KOL_POST",
+            authorHandle: parsed.handle || "unknown", text: body.description || body.title,
+            postedAt: new Date(), missionId: mission.id
+          },
+          update: { missionId: mission.id }
+        });
+      }
+    }
+    res.json(mission);
+  }));
+
+  // ── Announcement composer ────────────────────────────────────────
+  app.post("/communities/:id/announcements", writeLimiter, asyncRoute(async (req, res) => {
+    const wallet = walletFromAuth(req);
+    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
+    const seat = await loadLeadSeat(prisma, req.params.id);
+    const isLead = seat.wallet ? sameWallet(seat.wallet, wallet) : false;
+    if (!isLead && !isAdminWallet(wallet)) return res.status(403).json({ error: "Only community lead can post announcements" });
+    const user = await prisma.user.findUnique({ where: { wallet } });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    const { text, pinned, expiresAt } = z.object({
+      text: z.string().min(1).max(1000),
+      pinned: z.boolean().optional(),
+      expiresAt: z.string().datetime().optional()
+    }).parse(req.body);
+    const announcement = await prisma.announcement.create({
+      data: {
+        communityId: req.params.id, authorId: user.id, text, pinned: Boolean(pinned),
+        expiresAt: expiresAt ? new Date(expiresAt) : undefined
+      },
+      include: { author: { select: { wallet: true, displayName: true } } }
+    });
+    res.json(announcement);
+  }));
+
+  app.delete("/communities/:id/announcements/:annoId", writeLimiter, asyncRoute(async (req, res) => {
+    const wallet = walletFromAuth(req);
+    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
+    const seat = await loadLeadSeat(prisma, req.params.id);
+    const isLead = seat.wallet ? sameWallet(seat.wallet, wallet) : false;
+    if (!isLead && !isAdminWallet(wallet)) return res.status(403).json({ error: "Only community lead can delete announcements" });
+    await prisma.announcement.delete({ where: { id: req.params.annoId } });
+    res.json({ ok: true });
+  }));
+
+  // ── Holder balance refresh (admin / cron) ────────────────────────
+  app.post("/admin/communities/:id/refresh-holder-multipliers", adminLimiter, asyncRoute(async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const community = await prisma.community.findUnique({ where: { id: req.params.id } });
+    const holderTiers = await (prisma as any).holderTier.findMany({
+      where: { communityId: req.params.id },
+      orderBy: { minTokens: "desc" }
+    });
+    if (!community) return res.status(404).json({ error: "Community not found" });
+    if (!community.contractAddress || !community.chainId) return res.status(400).json({ error: "Community has no contract address" });
+    // Fetch holders via Helius (Solana) or Alchemy (EVM)
+    const rpcUrl = community.chainId === "solana"
+      ? `https://mainnet.helius-rpc.com/?api-key=${process.env.HELIUS_API_KEY}`
+      : `https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`;
+    if (!rpcUrl.includes("undefined")) {
+      try {
+        // For EVM: use eth_call balanceOf; for Solana: use getTokenLargestAccounts
+        // We do a simplified batch: get all members and check balances
+        const members = await prisma.communityMember.findMany({
+          where: { communityId: req.params.id },
+          include: { user: { select: { id: true, wallet: true } } }
+        });
+        let updated = 0;
+        for (const member of members) {
+          const { wallet } = member.user;
+          let balance = 0;
+          if (community.chainId !== "solana") {
+            const data = `0x70a08231000000000000000000000000${wallet.replace("0x", "")}`;
+            const rpcResp = await fetch(rpcUrl, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to: community.contractAddress, data }, "latest"] }),
+              signal: AbortSignal.timeout(5000)
+            });
+            const rpcData = await rpcResp.json();
+            balance = parseInt(rpcData.result || "0x0", 16) / 1e18;
+          }
+          const matchedTier = holderTiers.find((t: any) => balance >= t.minTokens);
+          const multiplier = matchedTier ? matchedTier.multiplier : 1.0;
+          await (prisma.user as any).update({ where: { id: member.user.id }, data: { holderMultiplier: multiplier } });
+          updated++;
+        }
+        res.json({ ok: true, updated });
+      } catch (e: any) {
+        res.status(502).json({ error: "RPC fetch failed", detail: e?.message });
+      }
+    } else {
+      res.status(400).json({ error: "No RPC API key configured (HELIUS_API_KEY or ALCHEMY_API_KEY)" });
+    }
+  }));
+
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
     if (err instanceof z.ZodError) {
       return res.status(400).json({ error: "Validation failed", details: err.issues });

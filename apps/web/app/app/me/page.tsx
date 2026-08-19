@@ -144,6 +144,12 @@ export default function MyOpsPage() {
         <Link href="/app/alliances" className="btn secondary">⚔️ Alliance Raids</Link>
         <Link href="/app/admin/holder-tiers" className="btn secondary">💎 Holder Tiers</Link>
         <Link href="/app/proof-queue" className="btn secondary">📋 Proof Queue</Link>
+        <Link href="/app/daily-quest" className="btn secondary">⚡ Daily Quest</Link>
+        <Link href="/app/seasons" className="btn secondary">🏆 Seasons</Link>
+        <Link href="/app/redeem" className="btn secondary">🪙 Redeem Tokens</Link>
+        <Link href="/app/admin/mission-builder" className="btn secondary">🛠 Mission Builder</Link>
+        <Link href="/app/admin/kol-manager" className="btn secondary">🎯 KOL Manager</Link>
+        <Link href="/app/admin/announcements" className="btn secondary">📢 Announcements</Link>
       </div>
       <h2>Shill history</h2>
       {(profile?.shills?.length ?? 0) === 0 && (

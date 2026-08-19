@@ -3,6 +3,7 @@ import CommunityBanner from "./CommunityBanner";
 import LiveFeedToasts from "./LiveFeedToasts";
 import NavFeedLink from "./NavFeedLink";
 import PWAInit from "./PWAInit";
+import PushOptIn from "./PushOptIn";
 import "./globals.css";
 import Link from "next/link";
 import type { ReactNode } from "react";
@@ -34,6 +35,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           <Link href="/app/leaderboard">Communities</Link>
           <Link href="/app/proof-gallery">Gallery</Link>
           <Link href="/app/alliances">Alliances</Link>
+          <Link href="/app/daily-quest">Daily Quest</Link>
+          <Link href="/app/seasons">Seasons</Link>
           <Link href="/app/admin/signals">Signals</Link>
           <Link href="/app/admin/attribution">Attribution</Link>
           <Link href="/app/admin/notifications">Alerts</Link>
@@ -41,6 +44,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           <ConnectWalletButton />
         </nav>
         <CommunityBanner />
+        <PushOptIn />
         {children}
         <LiveFeedToasts />
         <PWAInit />

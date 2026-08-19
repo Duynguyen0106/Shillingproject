@@ -11,6 +11,15 @@ import ConnectWalletButton from "../../../ConnectWalletButton";
 import FocusRaidCard from "../../../FocusRaidCard";
 import type { FocusRaid } from "../../../../lib/shillAction";
 
+function ShareCommunityBtn({ ticker, communityUrl }: { ticker: string; communityUrl: string }) {
+  const text = `Raiding $${ticker} on ShillOps! 🚀 Coordinate shills, earn points, redeem tokens.\n\nJoin: ${communityUrl}`;
+  return (
+    <a href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}`} target="_blank" rel="noreferrer" className="btn share-on-x-btn">
+      𝕏 Share on X
+    </a>
+  );
+}
+
 type TrustReport = {
   level: "ok" | "caution" | "high-risk";
   reasons: string[];
@@ -458,6 +467,18 @@ export default function TokenHub({ chain, address }: { chain: string; address: s
               </p>
             ))
           )}
+        </div>
+      )}
+      {community && token && (
+        <div className="card community-share-card">
+          <h3>Spread the word 📣</h3>
+          <p className="muted">Share this community with your network and bring in more raiders.</p>
+          <div className="row" style={{ marginTop: "0.75rem", flexWrap: "wrap", gap: "0.5rem" }}>
+            <ShareCommunityBtn ticker={token.symbol} communityUrl={typeof window !== "undefined" ? window.location.href : ""} />
+            <Link href="/app/daily-quest" className="btn secondary">⚡ Daily Quest</Link>
+            <Link href="/app/seasons" className="btn secondary">🏆 Seasons</Link>
+            <Link href="/app/referral" className="btn secondary">🔗 Invite friends</Link>
+          </div>
         </div>
       )}
       <p>{status}</p>
