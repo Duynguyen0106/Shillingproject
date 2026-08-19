@@ -199,7 +199,7 @@ export default function RaidFeedPage() {
               liveRaiders: liveRaiders.slice(0, 6)
             };
           }),
-          focus: current.focus?.postId === event.postId && mine
+          focus: current.focus && current.focus.postId === event.postId && mine
             ? { ...current.focus, youShilled: true }
             : current.focus
         };
@@ -232,7 +232,9 @@ export default function RaidFeedPage() {
       if (!event?.postId) return;
       setFeed((current) => current ? {
         ...current,
-        focus: current.focus?.postId === event.postId ? { ...current.focus, youProved: true } : current.focus,
+        focus: current.focus && current.focus.postId === event.postId
+          ? { ...current.focus, youProved: true }
+          : current.focus,
         posts: current.posts.map((post) => post.id === event.postId ? { ...post, youProved: true } : post)
       } : current);
     };
