@@ -29,6 +29,7 @@ import {
 } from "./dexscreener";
 import { ingestNormalizedPost, kolProfileData, parseWatchHandle, refreshAllCommunityFeeds, refreshCommunityFeed } from "./feed";
 import { liveListenerCount, postsCreatedSince, snapshotKol, subscribeLiveFeed } from "./livefeed";
+import { attachShillState, serializeShillHistory } from "./shill";
 import { applyFeedFilters, applyKolFilters, attachKolStats, configuredFeedProvider, fetchUserProfile, mentionMatches, parseXHandle, parseXStatusUrl, postHeat } from "./xfeed";
 
 const appUrl = process.env.APP_URL || "http://localhost:3000";
@@ -97,6 +98,11 @@ const createLinkSchema = z.object({
 
 const claimSchema = z.object({
   wallet: z.string().min(3).optional()
+});
+
+const shillPostSchema = z.object({
+  wallet: z.string().min(3).optional(),
+  reshill: z.boolean().optional()
 });
 
 const pinSchema = z.object({
@@ -833,7 +839,7 @@ export function createApp(prisma: PrismaClient) {
     if (!user) return res.status(404).json({ error: "User not found" });
     const communityId = String(req.query.communityId || process.env.DEMO_COMMUNITY_ID || "demo-community");
 
-    const [claims, submissions, scoreAgg, leaderboard, links] = await Promise.all([
+    const [claims, submissions, scoreAgg, leaderboard, links, shills] = await Promise.all([
       prisma.missionClaim.findMany({
         where: { userId: user.id, mission: { communityId } },
         include: {
@@ -869,7 +875,15 @@ export function createApp(prisma: PrismaClient) {
         where: { userId: user.id, communityId },
         include: { _count: { select: { clicks: true } }, mission: { select: { title: true } } },
         orderBy: { createdAt: "desc" }
-      })
+      }),
+      prisma.feedShill?.findMany?.({
+        where: { userId: user.id, communityId },
+        include: {
+          feedPost: { select: { id: true, url: true, authorHandle: true, text: true, kind: true, postedAt: true } }
+        },
+        orderBy: { createdAt: "desc" },
+        take: 50
+      }) ?? []
     ]);
 
     const rankIndex = leaderboard.findIndex((row) => row.userId === user.id);
@@ -911,7 +925,13 @@ export function createApp(prisma: PrismaClient) {
         isVerified: submission.isVerified,
         submittedAt: submission.submittedAt
       })),
-      links: trackedLinks
+      links: trackedLinks,
+      shills: (shills ?? []).map((shill) => ({
+        id: shill.id,
+        at: shill.createdAt,
+        reshill: shill.reshill,
+        post: shill.feedPost
+      }))
     });
   }));
 
@@ -1124,7 +1144,8 @@ export function createApp(prisma: PrismaClient) {
       since: typeof req.query.since === "string" && req.query.since ? req.query.since : undefined
     });
     const since = filters.since ? new Date(filters.since) : null;
-    const [rawPosts, rawKols] = await Promise.all([
+    const viewerWallet = resolveActorWallet(req, typeof req.query.wallet === "string" ? req.query.wallet : undefined);
+    const [rawPosts, rawKols, shills, viewer] = await Promise.all([
       prisma.feedPost?.findMany?.({
         where: { communityId: community.id },
         orderBy: { postedAt: "desc" },
@@ -1134,16 +1155,39 @@ export function createApp(prisma: PrismaClient) {
       prisma.kolWatch?.findMany?.({
         where: { communityId: community.id },
         include: { _count: { select: { posts: true } } }
-      }) ?? []
+      }) ?? [],
+      prisma.feedShill?.findMany?.({
+        where: { communityId: community.id },
+        include: {
+          user: { select: { wallet: true, displayName: true } },
+          feedPost: { select: { id: true, url: true, authorHandle: true, text: true, kind: true } }
+        },
+        orderBy: { createdAt: "desc" },
+        take: 400
+      }) ?? [],
+      viewerWallet ? prisma.user?.findUnique?.({ where: { wallet: viewerWallet } }) : null
     ]);
     const fresh = postsCreatedSince(rawPosts, since && !Number.isNaN(since.getTime()) ? since : null);
-    const posts = applyFeedFilters(fresh, filters).slice(0, 50).map((post) => ({
+    const mapped = applyFeedFilters(fresh, filters).slice(0, 50).map((post) => ({
       ...post,
       heat: postHeat(post),
       kol: snapshotKol(post.kolWatch ?? rawKols.find((kol) => kol.handle === post.authorHandle))
     }));
+    const posts = attachShillState(mapped, shills, viewer?.id);
     const kols = applyKolFilters(attachKolStats(rawKols, rawPosts), filters)
       .sort((a, b) => (b.followers ?? -1) - (a.followers ?? -1));
+    const shillHistory = serializeShillHistory(shills.slice(0, 30), viewer?.id).map((item, index) => ({
+      ...item,
+      post: shills[index]?.feedPost
+        ? {
+          id: shills[index].feedPost!.id,
+          url: shills[index].feedPost!.url,
+          authorHandle: shills[index].feedPost!.authorHandle,
+          text: shills[index].feedPost!.text,
+          kind: shills[index].feedPost!.kind
+        }
+        : { id: item.feedPostId }
+    }));
     res.json({
       provider: configuredFeedProvider(),
       ticker: community.ticker,
@@ -1152,7 +1196,8 @@ export function createApp(prisma: PrismaClient) {
       serverTime: new Date().toISOString(),
       live: true,
       kols,
-      posts
+      posts,
+      shillHistory
     });
   }));
 
@@ -1291,7 +1336,7 @@ export function createApp(prisma: PrismaClient) {
   }));
 
   app.post("/communities/:id/feed/:postId/shill", asyncRoute(async (req, res) => {
-    const { wallet: bodyWallet } = claimSchema.parse(req.body ?? {});
+    const { wallet: bodyWallet, reshill } = shillPostSchema.parse(req.body ?? {});
     const wallet = resolveActorWallet(req, bodyWallet);
     if (!wallet) return res.status(401).json({ error: "Connect a wallet and sign in first" });
     const post = await prisma.feedPost.findUnique({ where: { id: req.params.postId } });
@@ -1304,6 +1349,21 @@ export function createApp(prisma: PrismaClient) {
       where: { userId_communityId: { userId: user.id, communityId: community.id } }
     });
     if (!member) return res.status(403).json({ error: "Join this mint before shilling" });
+    const prior = await prisma.feedShill?.count?.({ where: { feedPostId: post.id, userId: user.id } }) ?? 0;
+    if (prior > 0 && !reshill) {
+      const last = await prisma.feedShill?.findFirst?.({
+        where: { feedPostId: post.id, userId: user.id },
+        orderBy: { createdAt: "desc" }
+      });
+      return res.json({
+        alreadyShilled: true,
+        youShillCount: prior,
+        lastShilledAt: last?.createdAt ?? null,
+        url: post.url,
+        missionId: post.missionId,
+        claimed: true
+      });
+    }
     let missionId = post.missionId;
     if (!missionId) {
       const mission = await spawnRaidFromFeedPost(
@@ -1328,8 +1388,26 @@ export function createApp(prisma: PrismaClient) {
       update: {},
       create: { missionId: mission.id, userId: user.id }
     });
+    const shill = await prisma.feedShill?.create?.({
+      data: {
+        communityId: community.id,
+        feedPostId: post.id,
+        userId: user.id,
+        missionId: mission.id,
+        reshill: prior > 0
+      }
+    });
     await touchMemberActivity(prisma, user.id, community.id);
-    res.json({ url: post.url, missionId: mission.id, claimed: true, shortLink });
+    res.json({
+      url: post.url,
+      missionId: mission.id,
+      claimed: true,
+      alreadyShilled: prior > 0,
+      reshill: prior > 0,
+      youShillCount: prior + 1,
+      shill,
+      shortLink
+    });
   }));
 
   app.post("/signals/ingest", asyncRoute(async (req, res) => {
@@ -1422,7 +1500,7 @@ export function createApp(prisma: PrismaClient) {
   }));
 
   app.get("/communities/:id/activity", asyncRoute(async (req, res) => {
-    const [claims, submissions, clickScores] = await Promise.all([
+    const [claims, submissions, clickScores, feedShills] = await Promise.all([
       prisma.missionClaim.findMany({
         where: { mission: { communityId: req.params.id } },
         include: {
@@ -1446,7 +1524,16 @@ export function createApp(prisma: PrismaClient) {
         include: { user: { select: { wallet: true, displayName: true } } },
         orderBy: { createdAt: "desc" },
         take: 20
-      })
+      }),
+      prisma.feedShill?.findMany?.({
+        where: { communityId: req.params.id },
+        include: {
+          user: { select: { wallet: true, displayName: true } },
+          feedPost: { select: { authorHandle: true, url: true } }
+        },
+        orderBy: { createdAt: "desc" },
+        take: 20
+      }) ?? []
     ]);
     const events = [
       ...claims.map((claim) => ({
@@ -1472,6 +1559,14 @@ export function createApp(prisma: PrismaClient) {
         displayName: score.user.displayName,
         title: score.reason,
         points: score.points as number | null
+      })),
+      ...(feedShills ?? []).map((shill) => ({
+        type: "SHILL" as const,
+        at: shill.createdAt,
+        wallet: shill.user.wallet,
+        displayName: shill.user.displayName,
+        title: `${shill.reshill ? "reshilled" : "shilled"} @${shill.feedPost?.authorHandle ?? "post"}`,
+        points: null as number | null
       }))
     ]
       .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())

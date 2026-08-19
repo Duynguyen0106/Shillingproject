@@ -6,7 +6,7 @@ function shortWallet(wallet: string): string {
 }
 
 type ActivityEvent = {
-  type: "CLAIM" | "SUBMISSION" | "CLICK";
+  type: "CLAIM" | "SUBMISSION" | "CLICK" | "SHILL";
   at: string;
   wallet: string;
   displayName?: string | null;
@@ -17,7 +17,8 @@ type ActivityEvent = {
 const labels: Record<ActivityEvent["type"], string> = {
   CLAIM: "claimed",
   SUBMISSION: "submitted proof on",
-  CLICK: "drove a click"
+  CLICK: "drove a click",
+  SHILL: ""
 };
 
 export default async function ActivityFeed({ communityId }: { communityId: string }) {

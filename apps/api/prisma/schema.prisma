@@ -57,6 +57,7 @@ model User {
   shortLinks   ShortLink[]
   pinnedMissions Mission[] @relation("MissionPins")
   checkIns     MissionCheckIn[]
+  feedShills   FeedShill[]
 }
 
 model Community {
@@ -80,6 +81,7 @@ model Community {
   shortLinks       ShortLink[]
   kolWatches       KolWatch[]
   feedPosts        FeedPost[]
+  feedShills       FeedShill[]
 
   @@unique([chainId, contractAddress])
 }
@@ -126,10 +128,28 @@ model FeedPost {
   community        Community    @relation(fields: [communityId], references: [id], onDelete: Cascade)
   kolWatch         KolWatch?    @relation(fields: [kolWatchId], references: [id], onDelete: SetNull)
   mission          Mission?     @relation(fields: [missionId], references: [id], onDelete: SetNull)
+  shills           FeedShill[]
 
   @@unique([communityId, url])
   @@index([communityId, postedAt])
   @@index([communityId, authorHandle])
+}
+
+model FeedShill {
+  id          String    @id @default(cuid())
+  communityId String
+  feedPostId  String
+  userId      String
+  missionId   String?
+  reshill     Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  feedPost    FeedPost  @relation(fields: [feedPostId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([communityId, createdAt])
+  @@index([feedPostId, createdAt])
+  @@index([userId, feedPostId])
 }
 
 model CommunityMember {

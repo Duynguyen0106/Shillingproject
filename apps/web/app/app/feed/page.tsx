@@ -6,7 +6,7 @@ import ConnectWalletButton from "../../ConnectWalletButton";
 import { API_BASE } from "../../../lib/config";
 import { getStoredCommunityId } from "../../../lib/community";
 import { LIVE_POST_EVENT, compactCount, type LiveFeedEvent, type LiveKol } from "../../../lib/liveFeed";
-import { authHeaders, getStoredWallet, notifyOps } from "../../../lib/session";
+import { authHeaders, getStoredWallet, notifyOps, shortAddress } from "../../../lib/session";
 import { useConnectedWallet } from "../../../lib/useConnectedWallet";
 
 type FeedPost = {
@@ -28,6 +28,24 @@ type FeedPost = {
   missionId?: string | null;
   mission?: { id: string; status: string; title: string } | null;
   kol?: LiveKol | null;
+  shillCount?: number;
+  raiderCount?: number;
+  youShilled?: boolean;
+  youShillCount?: number;
+  youLastShilledAt?: string | null;
+  lastShilledAt?: string | null;
+  recentShills?: Array<{ wallet: string; displayName?: string | null; reshill?: boolean; at: string; you?: boolean }>;
+};
+
+type ShillHistoryItem = {
+  id?: string;
+  feedPostId: string;
+  at: string;
+  reshill: boolean;
+  wallet: string;
+  displayName?: string | null;
+  you: boolean;
+  post?: { id?: string; url?: string; authorHandle?: string; text?: string; kind?: string };
 };
 
 type KolWatch = {
@@ -51,6 +69,7 @@ type FeedResponse = {
   contractAddress?: string | null;
   kols: KolWatch[];
   posts: FeedPost[];
+  shillHistory?: ShillHistoryItem[];
 };
 
 function timeAgo(value: string): string {
@@ -95,8 +114,13 @@ export default function RaidFeedPage() {
     if (minFollowers) params.set("minFollowers", String(minFollowers));
     if (minEngagement) params.set("minEngagement", String(minEngagement));
     if (sort !== "new") params.set("sort", sort);
+    const wallet = getStoredWallet();
+    if (wallet) params.set("wallet", wallet);
     const qs = params.toString();
-    const res = await fetch(`${API_BASE}/communities/${communityId}/feed${qs ? `?${qs}` : ""}`, { cache: "no-store" });
+    const res = await fetch(`${API_BASE}/communities/${communityId}/feed${qs ? `?${qs}` : ""}`, {
+      cache: "no-store",
+      headers: authHeaders()
+    });
     if (!res.ok) {
       setFeed(null);
       setStatus("Bind a mint first, then open the raid feed.");
@@ -104,7 +128,7 @@ export default function RaidFeedPage() {
     }
     setFeed(await res.json());
     setStatus("");
-  }, [kind, kolFilter, minFollowers, minEngagement, sort]);
+  }, [kind, kolFilter, minFollowers, minEngagement, sort, wallet]);
 
   useEffect(() => {
     void load();
@@ -176,16 +200,20 @@ export default function RaidFeedPage() {
     await load();
   }
 
-  async function shill(post: FeedPost) {
+  async function shill(post: FeedPost, reshill = false) {
     if (!wallet) {
       setStatus("Connect a wallet to claim the raid.");
+      return;
+    }
+    if (post.youShilled && !reshill) {
+      setStatus("You already shilled this post. Use Reshill if you want another reply.");
       return;
     }
     setBusy(true);
     const res = await fetch(`${API_BASE}/communities/${getStoredCommunityId()}/feed/${post.id}/shill`, {
       method: "POST",
       headers: authHeaders(),
-      body: JSON.stringify({ wallet: getStoredWallet() })
+      body: JSON.stringify({ wallet: getStoredWallet(), reshill })
     });
     const body = await res.json().catch(() => ({}));
     setBusy(false);
@@ -193,9 +221,16 @@ export default function RaidFeedPage() {
       setStatus(body.error || "Could not claim this post.");
       return;
     }
+    if (body.alreadyShilled && !reshill) {
+      setStatus("You already shilled this post. Use Reshill if you want another reply.");
+      await load();
+      return;
+    }
     notifyOps();
     window.open(body.url || post.url, "_blank", "noopener,noreferrer");
-    setStatus("Raid claimed. Reply on that X post, then submit proof on the mission.");
+    setStatus(reshill
+      ? "Reshill recorded. Reply again on that X post, then submit proof."
+      : "Raid claimed. Reply on that X post, then submit proof on the mission.");
     await load();
   }
 
@@ -216,7 +251,7 @@ export default function RaidFeedPage() {
       <div className="kicker">Do not hunt on X</div>
       <h1>Raid Feed</h1>
       <p className="muted">
-        New KOL posts pop in live — no reload. Filter by followers and interaction, then shill the post.
+        New KOL posts pop in live. Already-shilled posts are marked so you do not hit them twice — reshill if you want another reply.
       </p>
       {feed && (
         <div className="row">
@@ -339,6 +374,22 @@ export default function RaidFeedPage() {
           </button>
         </div>
       </div>
+      <div className="card">
+        <h3>Coin shill history</h3>
+        <p className="muted">Who already hit each post on this mint. Your rows are marked so you can skip or reshill.</p>
+        {(feed?.shillHistory?.length ?? 0) === 0 && <p className="muted">No shills recorded yet. Shill a post to start the log.</p>}
+        {feed?.shillHistory?.map((item) => (
+          <div key={item.id || `${item.feedPostId}-${item.at}`} className="row" style={{ marginBottom: 8 }}>
+            {item.you && <span className="badge ok">You</span>}
+            {item.reshill && <span className="badge">Reshill</span>}
+            <strong>{item.displayName || (item.wallet ? shortAddress(item.wallet) : "Raider")}</strong>
+            <span className="muted">
+              {item.reshill ? "reshilled" : "shilled"} @{item.post?.authorHandle ?? "post"} · {timeAgo(item.at)}
+            </span>
+            {item.post?.url && <a href={item.post.url} target="_blank" rel="noreferrer">Post</a>}
+          </div>
+        ))}
+      </div>
       {(feed?.posts.length ?? 0) === 0 && (
         <div className="card">
           <p>No posts match these filters. Watch KOLs, pull live, or loosen followers/interaction.</p>
@@ -368,11 +419,25 @@ export default function RaidFeedPage() {
           <p className="muted">
             {compact(post.likeCount)} likes · {compact(post.replyCount)} replies · {compact(post.retweetCount)} reposts · {compact(post.quoteCount)} quotes · {compact(post.viewCount)} views
           </p>
+          <p className="muted">
+            {post.youShilled
+              ? `You shilled this${post.youShillCount && post.youShillCount > 1 ? ` ${post.youShillCount}×` : ""}${post.youLastShilledAt ? ` · ${timeAgo(post.youLastShilledAt)}` : ""}`
+              : "You have not shilled this post yet"}
+            {(post.raiderCount ?? 0) > 0 ? ` · ${post.raiderCount} raider${post.raiderCount === 1 ? "" : "s"}` : ""}
+            {(post.shillCount ?? 0) > 0 ? ` · ${post.shillCount} shill${post.shillCount === 1 ? "" : "s"}` : ""}
+          </p>
           <div className="row">
             <a className="btn" href={post.url} target="_blank" rel="noreferrer">Open on X</a>
-            <button className="btn secondary" disabled={busy} onClick={() => void shill(post)}>
-              Shill this
-            </button>
+            {post.youShilled ? (
+              <button className="btn secondary" disabled={busy} onClick={() => void shill(post, true)}>
+                Reshill
+              </button>
+            ) : (
+              <button className="btn secondary" disabled={busy} onClick={() => void shill(post)}>
+                Shill this
+              </button>
+            )}
+            {post.youShilled && <span className="badge ok">Already shilled</span>}
             {post.missionId && <Link href={`/app/missions/${post.missionId}`}>Mission</Link>}
           </div>
         </div>

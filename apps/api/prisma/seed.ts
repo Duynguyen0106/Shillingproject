@@ -182,6 +182,25 @@ async function main() {
       missionId: mission.id
     }
   });
+
+  const mentionPost = await prisma.feedPost.findUnique({
+    where: { communityId_url: { communityId: community.id, url: "https://x.com/random/status/2" } }
+  });
+  if (mentionPost) {
+    const already = await prisma.feedShill.findFirst({
+      where: { feedPostId: mentionPost.id, userId: user.id }
+    });
+    if (!already) {
+      await prisma.feedShill.create({
+        data: {
+          communityId: community.id,
+          feedPostId: mentionPost.id,
+          userId: user.id,
+          missionId: mission.id
+        }
+      });
+    }
+  }
 }
 
 main()

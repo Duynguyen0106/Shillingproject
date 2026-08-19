@@ -42,6 +42,19 @@ export type ContributorNextPlay = {
   playId?: string | null;
 };
 
+export type ContributorShill = {
+  id: string;
+  at: string;
+  reshill: boolean;
+  post?: {
+    id: string;
+    url: string;
+    authorHandle: string;
+    text?: string;
+    kind?: string;
+  } | null;
+};
+
 export type ContributorProfile = {
   id: string;
   wallet: string;
@@ -55,6 +68,7 @@ export type ContributorProfile = {
   claims: ContributorClaim[];
   submissions: ContributorSubmission[];
   links?: ContributorLink[];
+  shills?: ContributorShill[];
 };
 
 export function useContributorProfile() {

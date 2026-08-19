@@ -117,6 +117,23 @@ export default function MyOpsPage() {
           </div>
         </div>
       ))}
+      <h2>Shill history</h2>
+      {(profile?.shills?.length ?? 0) === 0 && (
+        <div className="card">
+          <p className="muted">No shills yet. Open the raid feed and shill a KOL post.</p>
+          <Link href="/app/feed">Open raid feed</Link>
+        </div>
+      )}
+      {profile?.shills?.map((shill) => (
+        <div key={shill.id} className="card">
+          <div className="row">
+            {shill.reshill && <span className="badge">Reshill</span>}
+            <strong>@{shill.post?.authorHandle ?? "post"}</strong>
+          </div>
+          {shill.post?.text && <p className="muted">{shill.post.text.slice(0, 160)}</p>}
+          {shill.post?.url && <a href={shill.post.url} target="_blank" rel="noreferrer">Open post</a>}
+        </div>
+      ))}
     </main>
   );
 }
