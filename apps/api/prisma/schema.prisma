@@ -51,6 +51,8 @@ model User {
   xHandle      String?     @unique
   xVerified    Boolean     @default(false)
   xVerifyToken String?
+  referralCode String?     @unique
+  holderMultiplier Float   @default(1.0)
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
   memberships  CommunityMember[]
@@ -68,6 +70,8 @@ model User {
   pushSubscriptions PushSubscription[]
   redemptions  Redemption[]
   announcements Announcement[] @relation("AnnouncementAuthor")
+  referralsGiven  Referral[] @relation("ReferralReferrer")
+  referralsReceived Referral[] @relation("ReferralReferee")
 }
 
 model Community {
@@ -100,6 +104,9 @@ model Community {
   proofJobs        ProofJob[]
   announcements    Announcement[]
   redemptions      Redemption[]
+  holderTiers      HolderTier[]
+  alliancesInitiated AllianceRaid[] @relation("AllianceInitiator")
+  alliancesReceived  AllianceRaid[] @relation("AlliancePartner")
 
   @@unique([chainId, contractAddress])
 }
@@ -149,6 +156,7 @@ model FeedPost {
   shills           FeedShill[]
   focusedBy        Community[]  @relation("CommunityFocus")
   proofJobs        ProofJob[]
+  allianceRaids    AllianceRaid[]
 
   @@unique([communityId, url])
   @@index([communityId, postedAt])
@@ -423,4 +431,48 @@ model Redemption {
   community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
 
   @@index([userId, communityId])
+}
+
+model Referral {
+  id           String   @id @default(cuid())
+  referrerId   String
+  refereeId    String
+  communityId  String?
+  code         String   @unique
+  usedAt       DateTime?
+  createdAt    DateTime @default(now())
+  referrer     User     @relation("ReferralReferrer", fields: [referrerId], references: [id], onDelete: Cascade)
+  referee      User     @relation("ReferralReferee",  fields: [refereeId],  references: [id], onDelete: Cascade)
+
+  @@unique([referrerId, refereeId])
+  @@index([referrerId])
+  @@index([code])
+}
+
+model HolderTier {
+  id          String   @id @default(cuid())
+  communityId String
+  minTokens   Float
+  multiplier  Float
+  label       String
+  createdAt   DateTime @default(now())
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@index([communityId])
+}
+
+model AllianceRaid {
+  id              String   @id @default(cuid())
+  initiatorCommunityId String
+  partnerCommunityId   String
+  feedPostId      String
+  status          String   @default("active") // active | ended
+  createdAt       DateTime @default(now())
+  endsAt          DateTime
+  initiator       Community @relation("AllianceInitiator", fields: [initiatorCommunityId], references: [id], onDelete: Cascade)
+  partner         Community @relation("AlliancePartner",   fields: [partnerCommunityId],   references: [id], onDelete: Cascade)
+  post            FeedPost  @relation(fields: [feedPostId], references: [id], onDelete: Cascade)
+
+  @@index([initiatorCommunityId])
+  @@index([partnerCommunityId])
 }

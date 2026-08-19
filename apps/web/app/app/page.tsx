@@ -2,6 +2,7 @@ import Link from "next/link";
 import ActivityFeed from "../ActivityFeed";
 import AnnouncementBanner from "../AnnouncementBanner";
 import FocusRaidCard from "../FocusRaidCard";
+import TokenPriceCard from "../TokenPriceCard";
 import { getRequestCommunityId } from "../../lib/communityServer";
 import { apiGetSafe } from "../../lib/api";
 import { formatRemaining } from "../../lib/missionTime";
@@ -24,7 +25,7 @@ export default async function MissionBoardPage() {
   const communityId = getRequestCommunityId();
   const [missions, community] = await Promise.all([
     apiGetSafe<Mission[]>(`/communities/${communityId}/missions?status=active`, []),
-    apiGetSafe<{ focus?: FocusRaid | null }>(`/communities/${communityId}`, { focus: null })
+    apiGetSafe<{ focus?: FocusRaid | null; ticker?: string; contractAddress?: string; chainId?: string; dexUrl?: string }>(`/communities/${communityId}`, { focus: null })
   ]);
   const sorted = [...missions].sort((a, b) => b.urgency - a.urgency);
   return (
@@ -35,6 +36,12 @@ export default async function MissionBoardPage() {
         Use the <Link href="/app/feed">raid feed</Link> to click KOL posts and mentions. This board is the scored raid that opens from those posts.
       </p>
       {community.focus && <FocusRaidCard focus={community.focus} />}
+      <TokenPriceCard
+        contractAddress={community.contractAddress}
+        chainId={community.chainId}
+        ticker={community.ticker || "TOKEN"}
+        dexUrl={community.dexUrl}
+      />
       <AnnouncementBanner communityId={communityId} />
       {sorted.length === 0 && (
         <div className="card">

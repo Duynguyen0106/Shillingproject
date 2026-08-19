@@ -1258,3 +1258,100 @@ label {
 .cl-activity-proof .cl-activity-text { color: #4ade80; }
 .cl-activity-focus .cl-activity-text { color: #f87171; }
 .cl-activity-join  .cl-activity-text { color: #60a5fa; }
+
+/* ──────────────────────────────────────────────────────────────────
+   TOKEN PRICE CARD
+───────────────────────────────────────────────────────────────────*/
+.price-card { padding: 1rem 1.25rem; }
+.price-card.skeleton { opacity: 0.5; }
+.price-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
+.price-ticker { font-size: 1.1rem; font-weight: 800; color: var(--accent); }
+.price-dex-link { font-size: 0.75rem; color: #94a3b8; text-decoration: none; }
+.price-dex-link:hover { color: var(--accent); }
+.price-row { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; }
+.price-main { display: flex; align-items: baseline; gap: 0.75rem; }
+.price-usd { font-size: 1.4rem; font-weight: 700; color: #e2e8f0; }
+.price-change { font-size: 0.9rem; font-weight: 600; }
+.price-change.up { color: #22c55e; }
+.price-change.down { color: #f87171; }
+.price-stats { display: flex; gap: 1rem; flex-wrap: wrap; }
+.price-stat { display: flex; flex-direction: column; gap: 0.1rem; font-size: 0.8rem; }
+.price-stat strong { color: #e2e8f0; }
+
+/* ──────────────────────────────────────────────────────────────────
+   REFERRAL PAGE
+───────────────────────────────────────────────────────────────────*/
+.ref-card { padding: 1.25rem; }
+.ref-code-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: .06em; color: #94a3b8; margin-bottom: 0.4rem; }
+.ref-url { font-family: monospace; font-size: 0.85rem; color: var(--accent); word-break: break-all; margin-bottom: 0.75rem; padding: 0.6rem; background: #0d0d14; border-radius: 8px; border: 1px solid #1e1e2e; }
+.ref-input-row { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
+.ref-input-row .input { flex: 1; }
+
+/* ──────────────────────────────────────────────────────────────────
+   PROOF GALLERY
+───────────────────────────────────────────────────────────────────*/
+.proof-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem; margin-top: 1rem; }
+.proof-card { padding: 1rem; display: flex; flex-direction: column; gap: 0.4rem; }
+.proof-header { display: flex; justify-content: space-between; align-items: center; }
+.proof-user { font-weight: 600; font-size: 0.9rem; }
+.proof-mission { font-size: 0.8rem; color: #94a3b8; }
+.proof-action { display: flex; align-items: center; gap: 0.5rem; }
+.proof-link { font-size: 0.8rem; color: var(--accent); text-decoration: none; }
+.proof-link:hover { text-decoration: underline; }
+
+/* ──────────────────────────────────────────────────────────────────
+   PROOF QUEUE
+───────────────────────────────────────────────────────────────────*/
+.proof-queue-card { padding: 1rem; display: flex; flex-direction: column; gap: 0.5rem; }
+.pq-header { display: flex; justify-content: space-between; align-items: center; }
+.pq-user { font-weight: 600; }
+.pq-date { font-size: 0.75rem; }
+.pq-mission { font-size: 0.8rem; color: #94a3b8; }
+.pq-link { font-size: 0.8rem; color: var(--accent); word-break: break-all; text-decoration: none; }
+.pq-link:hover { text-decoration: underline; }
+.pq-actions { display: flex; gap: 0.5rem; margin-top: 0.25rem; }
+.pq-approve { background: #14532d; }
+.pq-approve:hover { background: #166534; }
+.pq-reject { background: #450a0a; }
+.pq-reject:hover { background: #7f1d1d; }
+
+/* ──────────────────────────────────────────────────────────────────
+   ALLIANCE RAIDS
+───────────────────────────────────────────────────────────────────*/
+.alliance-card { padding: 1rem 1.25rem; }
+.alliance-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
+.alliance-teams { font-size: 1.1rem; font-weight: 700; color: #e2e8f0; }
+.alliance-timer { background: #6c47ff22; color: var(--accent); border: 1px solid var(--accent); }
+.form-group { margin-bottom: 1rem; }
+.form-group label { display: block; font-size: 0.8rem; font-weight: 600; margin-bottom: 0.3rem; color: #94a3b8; }
+
+/* ──────────────────────────────────────────────────────────────────
+   BOT INTEGRATION CARD
+───────────────────────────────────────────────────────────────────*/
+.bot-card { padding: 1.25rem; margin-top: 1rem; }
+.bot-actions { display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.75rem; }
+.bot-btn-tg { background: #0088cc; color: #fff; }
+.bot-btn-tg:hover { background: #0077b5; }
+.bot-btn-discord { background: #5865f2; color: #fff; }
+.bot-btn-discord:hover { background: #4752c4; }
+.bot-btn-app { background: var(--accent); color: #fff; }
+.bot-setup strong { font-size: 0.9rem; }
+.bot-setup p { font-size: 0.8rem; margin-top: 0.2rem; }
+.bot-setup code { background: #13131a; padding: 0.15rem 0.4rem; border-radius: 4px; font-size: 0.8rem; }
+
+/* ──────────────────────────────────────────────────────────────────
+   INPUT / FORM
+───────────────────────────────────────────────────────────────────*/
+.input {
+  width: 100%;
+  padding: 0.55rem 0.75rem;
+  background: #0d0d14;
+  border: 1px solid #1e1e2e;
+  border-radius: 8px;
+  color: #e2e8f0;
+  font-size: 0.9rem;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.input:focus { border-color: var(--accent); }
+.input option { background: #0d0d14; }

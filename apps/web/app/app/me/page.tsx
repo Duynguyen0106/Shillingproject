@@ -8,6 +8,7 @@ import StreakCounter from "../../StreakCounter";
 import AchievementBadges, { useAchievements } from "../../AchievementBadges";
 import ProofJobStatus from "../../ProofJobStatus";
 import RedeemPoints from "../../RedeemPoints";
+import BotIntegrationCard from "../../BotIntegrationCard";
 import Link from "next/link";
 import { useContributorProfile } from "../../../lib/useContributorProfile";
 import { shortAddress } from "../../../lib/session";
@@ -136,6 +137,14 @@ export default function MyOpsPage() {
         </div>
       ))}
       <RedeemPoints />
+      <BotIntegrationCard communityId={getStoredCommunityId()} />
+      <div style={{ marginTop: "1rem", display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
+        <Link href="/app/referral" className="btn secondary">🔗 Referrals</Link>
+        <Link href="/app/proof-gallery" className="btn secondary">🖼 Proof Gallery</Link>
+        <Link href="/app/alliances" className="btn secondary">⚔️ Alliance Raids</Link>
+        <Link href="/app/admin/holder-tiers" className="btn secondary">💎 Holder Tiers</Link>
+        <Link href="/app/proof-queue" className="btn secondary">📋 Proof Queue</Link>
+      </div>
       <h2>Shill history</h2>
       {(profile?.shills?.length ?? 0) === 0 && (
         <div className="card">

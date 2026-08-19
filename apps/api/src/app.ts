@@ -753,17 +753,21 @@ async function recordVerifiedSubmission(
     proofUrl: string;
     proofText?: string;
     engagementValue: number;
+    holderMultiplier?: number;
   }
 ) {
   const isEarly = Date.now() - input.task.createdAt.getTime() < 10 * 60 * 1000;
   const duplicatePenalty = Boolean(input.proofText && input.proofText.toLowerCase().includes("copy"));
-  const points = scoreSubmission({
+  const basePoints = scoreSubmission({
     actionType: input.task.actionType,
     priority: input.task.mission.priority,
     isEarly,
     duplicatePenalty,
     engagementValue: input.engagementValue
   });
+  // Apply holder multiplier (capped at 3x)
+  const multiplier = Math.min(input.holderMultiplier ?? 1, 3);
+  const points = Math.round(basePoints * multiplier);
   const submission = await prisma.submission.create({
     data: {
       taskId: input.task.id,
@@ -1073,6 +1077,7 @@ async function scheduleReplyAutoScore(
     postId: string;
     postUrl: string;
     postKind: string;
+    holderMultiplier?: number;
   }
 ) {
   const parsed = parseXStatusUrl(opts.postUrl);
@@ -1134,7 +1139,8 @@ async function scheduleReplyAutoScore(
       userId: opts.userId,
       proofUrl: reply.url,
       proofText: reply.text.slice(0, 500),
-      engagementValue: 25
+      engagementValue: 25,
+      holderMultiplier: opts.holderMultiplier ?? 1
     });
     const scoredRows = await prisma.submission?.findMany?.({
       where: { task: { missionId: mission.id } },
@@ -1292,6 +1298,34 @@ export function createApp(prisma: PrismaClient) {
     sessions.set(token, { wallet: address });
     // Return only safe user fields (no tokens)
     res.json({ token, user: { id: user.id, wallet: user.wallet, displayName: user.displayName, xHandle: user.xHandle, xVerified: user.xVerified } });
+  }));
+
+  // ── Price proxy: DexScreener ────────────────────────────────────
+  app.get("/price", asyncRoute(async (req, res) => {
+    const contract = String(req.query.contract || "").trim();
+    const chain    = String(req.query.chain   || "solana").trim();
+    if (!contract) return res.status(400).json({ error: "Missing contract" });
+    try {
+      const dexRes = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${contract}`, {
+        headers: { "accept": "application/json" },
+        signal: AbortSignal.timeout(5000)
+      });
+      if (!dexRes.ok) return res.status(502).json({ error: "DexScreener error" });
+      const dexData: any = await dexRes.json();
+      const pairs: any[] = dexData.pairs || [];
+      const pair = pairs.find((p: any) => p.chainId === chain) || pairs[0];
+      if (!pair) return res.status(404).json({ error: "No pair found" });
+      res.json({
+        priceUsd: pair.priceUsd || "0",
+        priceChange24h: pair.priceChange?.h24 ?? 0,
+        volume24h: pair.volume?.h24?.toString() || "0",
+        liquidity: pair.liquidity?.usd?.toString() || "0",
+        fdv: pair.fdv?.toString() || "0",
+        dexUrl: pair.url || ""
+      });
+    } catch {
+      res.status(502).json({ error: "DexScreener fetch failed" });
+    }
   }));
 
   app.get("/me", asyncRoute(async (req, res) => {
@@ -2143,7 +2177,8 @@ export function createApp(prisma: PrismaClient) {
         communityId: community.id,
         postId: post.id,
         postUrl: post.url,
-        postKind: post.kind as string
+        postKind: post.kind as string,
+        holderMultiplier: ((user as any).holderMultiplier ?? 1)
       }).catch(() => undefined);
     }
     // Streak + achievements (fire-and-forget)
@@ -2293,7 +2328,8 @@ export function createApp(prisma: PrismaClient) {
       userId: user.id,
       proofUrl,
       proofText,
-      engagementValue: 25
+      engagementValue: 25,
+      holderMultiplier: ((user as any).holderMultiplier ?? 1)
     });
     const scoredRows = await prisma.submission?.findMany?.({
       where: { task: { missionId: mission.id } },
@@ -2707,7 +2743,8 @@ export function createApp(prisma: PrismaClient) {
       userId: user.id,
       proofUrl,
       proofText,
-      engagementValue
+      engagementValue,
+      holderMultiplier: ((user as any).holderMultiplier ?? 1)
     });
     res.json(submission);
   }));
@@ -3078,7 +3115,221 @@ export function createApp(prisma: PrismaClient) {
     res.json({ entries, missionId });
   }));
 
+  // ══════════════════════════════════════════════════════════════════
+  // FEATURE SPRINT 2 — Referrals, Holder Tiers, Alliances, Proof Gallery
+  // ══════════════════════════════════════════════════════════════════
+
+  // ── Referral: get/generate my invite code ────────────────────────
+  app.get("/me/referral-code", asyncRoute(async (req, res) => {
+    const wallet = walletFromAuth(req);
+    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
+    let user = await prisma.user.findUnique({ where: { wallet } });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    if (!(user as any).referralCode) {
+      user = await prisma.user.update({
+        where: { id: user.id },
+        data: { referralCode: nanoid(10) } as any
+      });
+    }
+    const referrals = await (prisma as any).referral.findMany({
+      where: { referrerId: user.id },
+      include: { referee: { select: { wallet: true, displayName: true } } },
+      orderBy: { createdAt: "desc" }
+    });
+    const totalReferredPoints = await prisma.score.aggregate({
+      where: { userId: { in: referrals.map((r: any) => r.refereeId) } },
+      _sum: { points: true }
+    });
+    res.json({
+      code: (user as any).referralCode,
+      referralUrl: `${appUrl}?ref=${(user as any).referralCode}`,
+      referralCount: referrals.length,
+      referrals: referrals.map((r: any) => ({
+        wallet: r.referee.wallet,
+        displayName: r.referee.displayName,
+        usedAt: r.usedAt
+      })),
+      bonusPoints: Math.floor((totalReferredPoints._sum.points ?? 0) * 0.05)
+    });
+  }));
+
+  // ── Referral: redeem a referral code on join ──────────────────────
+  app.post("/referral/use", writeLimiter, asyncRoute(async (req, res) => {
+    const wallet = walletFromAuth(req);
+    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
+    const { code } = z.object({ code: z.string().min(1) }).parse(req.body);
+    const referee = await prisma.user.findUnique({ where: { wallet } });
+    if (!referee) return res.status(404).json({ error: "User not found" });
+    const referrer = await prisma.user.findUnique({ where: { referralCode: code } as any });
+    if (!referrer) return res.status(404).json({ error: "Invalid referral code" });
+    if (referrer.id === referee.id) return res.status(400).json({ error: "Cannot refer yourself" });
+    const existing = await (prisma as any).referral.findUnique({
+      where: { referrerId_refereeId: { referrerId: referrer.id, refereeId: referee.id } }
+    });
+    if (existing) return res.status(409).json({ error: "Referral already recorded" });
+    const referral = await (prisma as any).referral.create({
+      data: { referrerId: referrer.id, refereeId: referee.id, code, usedAt: new Date() }
+    });
+    // Grant 50 bonus points to referrer
+    await prisma.score.create({
+      data: { userId: referrer.id, communityId: process.env.DEMO_COMMUNITY_ID || "demo", points: 50, reason: "Referral bonus", sourceId: referral.id }
+    });
+    res.json({ ok: true, referralId: referral.id, bonusToReferrer: 50 });
+  }));
+
+  // ── Holder tiers: list / create / delete ─────────────────────────
+  app.get("/communities/:id/holder-tiers", asyncRoute(async (req, res) => {
+    const tiers = await (prisma as any).holderTier.findMany({
+      where: { communityId: req.params.id },
+      orderBy: { minTokens: "asc" }
+    });
+    res.json(tiers);
+  }));
+
+  app.post("/communities/:id/holder-tiers", writeLimiter, asyncRoute(async (req, res) => {
+    const wallet = walletFromAuth(req);
+    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
+    const seat = await loadLeadSeat(prisma, req.params.id);
+    const isLead = seat.wallet ? sameWallet(seat.wallet, wallet) : false;
+    if (!isLead && !isAdminWallet(wallet)) return res.status(403).json({ error: "Only community lead can set holder tiers" });
+    const { minTokens, multiplier, label } = z.object({
+      minTokens: z.number().min(0),
+      multiplier: z.number().min(1).max(10),
+      label: z.string().min(1).max(40)
+    }).parse(req.body);
+    const tier = await (prisma as any).holderTier.create({
+      data: { communityId: req.params.id, minTokens, multiplier, label }
+    });
+    res.json(tier);
+  }));
+
+  app.delete("/communities/:id/holder-tiers/:tierId", writeLimiter, asyncRoute(async (req, res) => {
+    const wallet = walletFromAuth(req);
+    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
+    const seat = await loadLeadSeat(prisma, req.params.id);
+    const isLead = seat.wallet ? sameWallet(seat.wallet, wallet) : false;
+    if (!isLead && !isAdminWallet(wallet)) return res.status(403).json({ error: "Only community lead can delete holder tiers" });
+    await (prisma as any).holderTier.delete({ where: { id: req.params.tierId } });
+    res.json({ ok: true });
+  }));
+
+  // ── Proof gallery: verified shills with tweet URLs ───────────────
+  app.get("/communities/:id/proof-gallery", asyncRoute(async (req, res) => {
+    const limit = Math.min(Number(req.query.limit) || 20, 50);
+    const page  = Math.max(Number(req.query.page) || 1, 1);
+    const skip  = (page - 1) * limit;
+    const proofs = await prisma.submission.findMany({
+      where: {
+        task: { mission: { communityId: req.params.id } },
+        isVerified: true,
+        proofUrl: { not: undefined }
+      },
+      include: {
+        user:  { select: { wallet: true, displayName: true } },
+        task:  { select: { title: true, actionType: true, mission: { select: { title: true } } } }
+      },
+      orderBy: { submittedAt: "desc" },
+      take: limit,
+      skip
+    });
+    const total = await prisma.submission.count({
+      where: { task: { mission: { communityId: req.params.id } }, isVerified: true, proofUrl: { not: undefined } }
+    });
+    res.json({ proofs, total, page, pages: Math.ceil(total / limit) });
+  }));
+
+  // ── Lead proof verification queue ────────────────────────────────
+  app.get("/communities/:id/proof-queue", asyncRoute(async (req, res) => {
+    const wallet = walletFromAuth(req);
+    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
+    const seat = await loadLeadSeat(prisma, req.params.id);
+    const isLead = seat.wallet ? sameWallet(seat.wallet, wallet) : false;
+    if (!isLead && !isAdminWallet(wallet)) return res.status(403).json({ error: "Only community lead can view proof queue" });
+    const pending = await prisma.submission.findMany({
+      where: {
+        task: { mission: { communityId: req.params.id } },
+        isVerified: false,
+        proofUrl: { not: undefined }
+      },
+      include: {
+        user: { select: { wallet: true, displayName: true, xHandle: true } },
+        task: { select: { title: true, actionType: true, mission: { select: { title: true } } } }
+      },
+      orderBy: { submittedAt: "asc" },
+      take: 50
+    });
+    res.json(pending);
+  }));
+
+  // ── Alliance raids ────────────────────────────────────────────────
+  app.post("/communities/:id/alliances", writeLimiter, asyncRoute(async (req, res) => {
+    const wallet = walletFromAuth(req);
+    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
+    const seat = await loadLeadSeat(prisma, req.params.id);
+    const isLead = seat.wallet ? sameWallet(seat.wallet, wallet) : false;
+    if (!isLead && !isAdminWallet(wallet)) return res.status(403).json({ error: "Only community lead can propose alliances" });
+    const { partnerCommunityId, feedPostId, durationHours = 2 } = z.object({
+      partnerCommunityId: z.string(),
+      feedPostId: z.string(),
+      durationHours: z.number().min(1).max(24).default(2)
+    }).parse(req.body);
+    if (partnerCommunityId === req.params.id) return res.status(400).json({ error: "Cannot ally with yourself" });
+    const [community, partner, post] = await Promise.all([
+      prisma.community.findUnique({ where: { id: req.params.id }, select: { ticker: true, name: true } }),
+      prisma.community.findUnique({ where: { id: partnerCommunityId }, select: { ticker: true, name: true } }),
+      prisma.feedPost.findUnique({ where: { id: feedPostId }, select: { id: true, url: true } })
+    ]);
+    if (!community || !partner) return res.status(404).json({ error: "Community not found" });
+    if (!post) return res.status(404).json({ error: "Post not found" });
+    const alliance = await (prisma as any).allianceRaid.create({
+      data: {
+        initiatorCommunityId: req.params.id,
+        partnerCommunityId,
+        feedPostId,
+        status: "active",
+        endsAt: new Date(Date.now() + durationHours * 3600_000)
+      }
+    });
+    await dispatchAlert(
+      `⚔️ Alliance raid: $${community.ticker} x $${partner.ticker}\nJoin the raid: ${post.url}\nApp: ${appUrl}/app/feed`
+    );
+    res.json({ ok: true, alliance, community, partner });
+  }));
+
+  app.get("/communities/:id/alliances", asyncRoute(async (req, res) => {
+    const now = new Date();
+    const alliances = await (prisma as any).allianceRaid.findMany({
+      where: {
+        OR: [{ initiatorCommunityId: req.params.id }, { partnerCommunityId: req.params.id }],
+        status: "active",
+        endsAt: { gte: now }
+      },
+      include: {
+        initiator: { select: { id: true, name: true, ticker: true } },
+        partner:   { select: { id: true, name: true, ticker: true } },
+        post:      { select: { id: true, url: true, authorHandle: true, text: true } }
+      },
+      orderBy: { createdAt: "desc" }
+    });
+    res.json(alliances.map((a: any) => ({
+      ...a,
+      remainingMs: Math.max(0, new Date(a.endsAt).getTime() - Date.now())
+    })));
+  }));
+
+  // ── Admin: admin ── end admin ─────────────────────────────────────
   // ── Admin: rate-limit abuse flags ─────────────────────────────
+
+  // ── Admin: set holder multiplier for a user ───────────────────
+  app.patch("/admin/users/:wallet/holder-multiplier", adminLimiter, asyncRoute(async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const { multiplier } = z.object({ multiplier: z.number().min(1).max(3) }).parse(req.body);
+    const user = await prisma.user.findUnique({ where: { wallet: req.params.wallet.toLowerCase() } });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    await (prisma.user as any).update({ where: { id: user.id }, data: { holderMultiplier: multiplier } });
+    res.json({ ok: true, wallet: user.wallet, holderMultiplier: multiplier });
+  }));
+
   app.get("/admin/abuse-flags", adminLimiter, asyncRoute(async (req, res) => {
     if (!requireAdmin(req, res)) return;
     const since = new Date(Date.now() - 24 * 3600_000);

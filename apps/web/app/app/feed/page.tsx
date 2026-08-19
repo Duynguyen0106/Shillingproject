@@ -680,6 +680,11 @@ export default function RaidFeedPage() {
         );
       })}
       {status && <p>{status}</p>}
+      <div style={{ marginTop: "2rem" }}>
+        <Link href="/app/alliances" className="btn secondary" style={{ marginRight: "0.5rem" }}>⚔️ Alliance Raids</Link>
+        <Link href="/app/proof-gallery" className="btn secondary" style={{ marginRight: "0.5rem" }}>🖼 Proof Gallery</Link>
+        <Link href="/app/referral" className="btn secondary">🔗 Referrals</Link>
+      </div>
     </main>
   );
 }
