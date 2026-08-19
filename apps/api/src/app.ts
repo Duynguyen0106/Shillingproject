@@ -971,6 +971,94 @@ function serializeWarRoom(mission: {
 
 const LIVE_RAID_MS = 15 * 60 * 1000;
 
+// ── Streak helper ─────────────────────────────────────────────
+async function touchStreak(prisma: PrismaClient, userId: string): Promise<number> {
+  const now = new Date();
+  const todayStr = now.toISOString().slice(0, 10);
+  const streak = await prisma.userStreak.findUnique({ where: { userId } });
+  if (!streak) {
+    await prisma.userStreak.create({ data: { userId, currentStreak: 1, longestStreak: 1, lastActivityDate: now } });
+    return 1;
+  }
+  const lastStr = streak.lastActivityDate ? new Date(streak.lastActivityDate).toISOString().slice(0, 10) : null;
+  if (lastStr === todayStr) return streak.currentStreak;
+  const yesterday = new Date(now.getTime() - 86400_000).toISOString().slice(0, 10);
+  const newCurrent = lastStr === yesterday ? streak.currentStreak + 1 : 1;
+  const newLongest = Math.max(newCurrent, streak.longestStreak);
+  await prisma.userStreak.update({ where: { userId }, data: { currentStreak: newCurrent, longestStreak: newLongest, lastActivityDate: now } });
+  return newCurrent;
+}
+
+// ── Achievement helper ────────────────────────────────────────
+const ACHIEVEMENT_DEFS = [
+  { slug: "first-shill", title: "First Strike", description: "Complete your first shill", icon: "⚡" },
+  { slug: "first-proof", title: "Proof of Work", description: "Score your first raid reply", icon: "✅" },
+  { slug: "streak-3", title: "On a Roll", description: "3-day activity streak", icon: "🔥" },
+  { slug: "streak-7", title: "Week Warrior", description: "7-day activity streak", icon: "🏆" },
+  { slug: "streak-30", title: "Month Grinder", description: "30-day activity streak", icon: "💎" },
+  { slug: "shills-10", title: "Shill Machine", description: "Shill 10 posts", icon: "📣" },
+  { slug: "shills-50", title: "Megaphone", description: "Shill 50 posts", icon: "📢" },
+  { slug: "proofs-5", title: "Raider", description: "Score 5 raid replies", icon: "⚔️" },
+  { slug: "top-raider", title: "Top Raider", description: "Be #1 on a raid leaderboard", icon: "👑" },
+];
+
+async function checkAndAwardAchievements(
+  prisma: PrismaClient,
+  userId: string,
+  communityId: string,
+  streak: number
+): Promise<Array<{ slug: string; title: string; icon?: string | null }>> {
+  const [shillCount, proofCount, earned] = await Promise.all([
+    prisma.feedShill.count({ where: { userId, communityId } }),
+    prisma.submission.count({ where: { userId, task: { mission: { communityId } } } }),
+    prisma.userAchievement.findMany({ where: { userId }, select: { achievement: { select: { slug: true } } } })
+  ]);
+  const earnedSlugs = new Set(earned.map((ua) => ua.achievement.slug));
+  const toAward: string[] = [];
+  if (shillCount === 1 && !earnedSlugs.has("first-shill")) toAward.push("first-shill");
+  if (proofCount === 1 && !earnedSlugs.has("first-proof")) toAward.push("first-proof");
+  if (streak >= 3 && !earnedSlugs.has("streak-3")) toAward.push("streak-3");
+  if (streak >= 7 && !earnedSlugs.has("streak-7")) toAward.push("streak-7");
+  if (streak >= 30 && !earnedSlugs.has("streak-30")) toAward.push("streak-30");
+  if (shillCount >= 10 && !earnedSlugs.has("shills-10")) toAward.push("shills-10");
+  if (shillCount >= 50 && !earnedSlugs.has("shills-50")) toAward.push("shills-50");
+  if (proofCount >= 5 && !earnedSlugs.has("proofs-5")) toAward.push("proofs-5");
+  if (toAward.length === 0) return [];
+  // Ensure achievement rows exist
+  for (const def of ACHIEVEMENT_DEFS.filter((d) => toAward.includes(d.slug))) {
+    await prisma.achievement.upsert({
+      where: { slug: def.slug },
+      update: {},
+      create: def
+    });
+  }
+  const achievements = await prisma.achievement.findMany({ where: { slug: { in: toAward } } });
+  for (const ach of achievements) {
+    await prisma.userAchievement.upsert({
+      where: { userId_achievementId: { userId, achievementId: ach.id } },
+      update: {},
+      create: { userId, achievementId: ach.id }
+    }).catch(() => undefined);
+  }
+  return achievements.map((a) => ({ slug: a.slug, title: a.title, icon: a.icon }));
+}
+
+// ── Rate-limit store (in-process, per wallet) ─────────────────
+const shillRateLimit = new Map<string, { count: number; resetAt: number }>();
+const proofRateLimit = new Map<string, { count: number; resetAt: number }>();
+
+function checkRateLimit(store: Map<string, { count: number; resetAt: number }>, key: string, maxPerWindow: number, windowMs: number): boolean {
+  const now = Date.now();
+  const entry = store.get(key);
+  if (!entry || entry.resetAt < now) {
+    store.set(key, { count: 1, resetAt: now + windowMs });
+    return true;
+  }
+  if (entry.count >= maxPerWindow) return false;
+  entry.count += 1;
+  return true;
+}
+
 async function scheduleReplyAutoScore(
   prisma: PrismaClient,
   opts: {
@@ -984,16 +1072,25 @@ async function scheduleReplyAutoScore(
 ) {
   const parsed = parseXStatusUrl(opts.postUrl);
   if (!parsed?.id) return;
+  // Create a proof job to track status
+  const job = await prisma.proofJob.create({
+    data: { userId: opts.userId, communityId: opts.communityId, feedPostId: opts.postId, status: "PENDING" }
+  }).catch(() => null);
+  const updateJob = async (status: "CHECKING" | "SCORED" | "FAILED", extra?: { proofUrl?: string; pointsAwarded?: number; failReason?: string }) => {
+    if (!job) return;
+    await prisma.proofJob.update({ where: { id: job.id }, data: { status, ...extra } }).catch(() => undefined);
+  };
   const delays = [30_000, 90_000, 4 * 60_000, 8 * 60_000];
   for (const delay of delays) {
     await new Promise((resolve) => setTimeout(resolve, delay));
+    await updateJob("CHECKING");
     const existing = await prisma.submission?.findFirst?.({
       where: {
         userId: opts.userId,
         task: { mission: { feedPosts: { some: { id: opts.postId } } } }
       }
     });
-    if (existing) return;
+    if (existing) { await updateJob("SCORED", { proofUrl: existing.proofUrl, pointsAwarded: existing.pointsAwarded }); return; }
     const reply = await fetchReplyByHandle(opts.xHandle, parsed.id, LIVE_RAID_MS).catch(() => null);
     if (!reply) continue;
     const post = await prisma.feedPost.findUnique({ where: { id: opts.postId } });
@@ -1058,8 +1155,10 @@ async function scheduleReplyAutoScore(
       },
       pointsAwarded: submission.pointsAwarded
     });
+    await updateJob("SCORED", { proofUrl: reply.url, pointsAwarded: submission.pointsAwarded });
     return;
   }
+  await updateJob("FAILED", { failReason: "Reply not found within time window" });
 }
 
 export function createApp(prisma: PrismaClient) {
@@ -1728,6 +1827,10 @@ export function createApp(prisma: PrismaClient) {
     const { wallet: bodyWallet, reshill } = shillPostSchema.parse(req.body ?? {});
     const wallet = resolveActorWallet(req, bodyWallet);
     if (!wallet) return res.status(401).json({ error: "Connect a wallet and sign in first" });
+    // Rate-limit: max 30 shills per 5 minutes per wallet
+    if (!checkRateLimit(shillRateLimit, wallet, 30, 5 * 60_000)) {
+      return res.status(429).json({ error: "Too many shills — slow down." });
+    }
     const post = await prisma.feedPost.findUnique({ where: { id: req.params.postId } });
     if (!post || post.communityId !== req.params.id) return res.status(404).json({ error: "Post not found" });
     const community = await prisma.community.findUnique({ where: { id: req.params.id } });
@@ -1841,6 +1944,10 @@ export function createApp(prisma: PrismaClient) {
         postKind: post.kind as string
       }).catch(() => undefined);
     }
+    // Streak + achievements (fire-and-forget)
+    void touchStreak(prisma, user.id).then((streak) =>
+      checkAndAwardAchievements(prisma, user.id, community.id, streak)
+    ).catch(() => undefined);
     res.json({
       url: post.url,
       missionId: mission.id,
@@ -1925,6 +2032,10 @@ export function createApp(prisma: PrismaClient) {
     const { wallet: bodyWallet, proofUrl, proofText } = feedProofSchema.parse(req.body ?? {});
     const wallet = resolveActorWallet(req, bodyWallet);
     if (!wallet) return res.status(401).json({ error: "Connect a wallet and sign in first" });
+    // Rate-limit: max 10 proofs per 5 minutes per wallet
+    if (!checkRateLimit(proofRateLimit, wallet, 10, 5 * 60_000)) {
+      return res.status(429).json({ error: "Too many proof submissions — slow down." });
+    }
     const post = await prisma.feedPost.findUnique({ where: { id: req.params.postId } });
     if (!post || post.communityId !== req.params.id) return res.status(404).json({ error: "Post not found" });
     const community = await prisma.community.findUnique({ where: { id: req.params.id } });
@@ -2006,6 +2117,10 @@ export function createApp(prisma: PrismaClient) {
       provedCount,
       liveProvedCount
     });
+    // Streak + achievements (fire-and-forget)
+    void touchStreak(prisma, user.id).then((streak) =>
+      checkAndAwardAchievements(prisma, user.id, community.id, streak)
+    ).catch(() => undefined);
     res.json({
       ok: true,
       pointsAwarded: submission.pointsAwarded,
@@ -2493,6 +2608,253 @@ export function createApp(prisma: PrismaClient) {
 
   app.get("/notifications", asyncRoute(async (_req, res) => {
     res.json(notificationLog);
+  }));
+
+  app.get("/notifications", asyncRoute(async (_req, res) => {
+    res.json(notificationLog);
+  }));
+
+  // ── Proof job status ──────────────────────────────────────────
+  app.get("/me/proof-jobs", asyncRoute(async (req, res) => {
+    const wallet = walletFromAuth(req);
+    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
+    const user = await prisma.user.findUnique({ where: { wallet } });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    const communityId = String(req.query.communityId || process.env.DEMO_COMMUNITY_ID || "demo-community");
+    const jobs = await prisma.proofJob.findMany({
+      where: { userId: user.id, communityId },
+      orderBy: { createdAt: "desc" },
+      take: 20
+    });
+    res.json(jobs);
+  }));
+
+  // ── Streaks ───────────────────────────────────────────────────
+  app.get("/me/streak", asyncRoute(async (req, res) => {
+    const wallet = walletFromAuth(req);
+    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
+    const user = await prisma.user.findUnique({ where: { wallet } });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    const streak = await prisma.userStreak.findUnique({ where: { userId: user.id } });
+    res.json(streak ?? { userId: user.id, currentStreak: 0, longestStreak: 0, lastActivityDate: null });
+  }));
+
+  // ── Achievements ──────────────────────────────────────────────
+  app.get("/me/achievements", asyncRoute(async (req, res) => {
+    const wallet = walletFromAuth(req);
+    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
+    const user = await prisma.user.findUnique({ where: { wallet } });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    const earned = await prisma.userAchievement.findMany({
+      where: { userId: user.id },
+      include: { achievement: true },
+      orderBy: { earnedAt: "desc" }
+    });
+    res.json(earned.map((ua) => ({ ...ua.achievement, earnedAt: ua.earnedAt })));
+  }));
+
+  app.get("/achievements", asyncRoute(async (_req, res) => {
+    const all = await prisma.achievement.findMany({ orderBy: { slug: "asc" } });
+    res.json(all);
+  }));
+
+  // ── Announcements ─────────────────────────────────────────────
+  app.get("/communities/:id/announcements", asyncRoute(async (req, res) => {
+    const now = new Date();
+    const rows = await prisma.announcement.findMany({
+      where: {
+        communityId: req.params.id,
+        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }]
+      },
+      include: { author: { select: { wallet: true, displayName: true } } },
+      orderBy: [{ pinned: "desc" }, { createdAt: "desc" }],
+      take: 10
+    });
+    res.json(rows);
+  }));
+
+  app.post("/communities/:id/announcements", asyncRoute(async (req, res) => {
+    const wallet = walletFromAuth(req);
+    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
+    const user = await prisma.user.findUnique({ where: { wallet } });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    const member = await prisma.communityMember.findUnique({
+      where: { userId_communityId: { userId: user.id, communityId: req.params.id } }
+    });
+    if (!member || member.role !== "lead") return res.status(403).json({ error: "Only community leads can post announcements" });
+    const { text, pinned = false, expiresInHours } = z.object({
+      text: z.string().min(1).max(500),
+      pinned: z.boolean().optional(),
+      expiresInHours: z.number().optional()
+    }).parse(req.body);
+    const expiresAt = expiresInHours ? new Date(Date.now() + expiresInHours * 3600_000) : undefined;
+    const ann = await prisma.announcement.create({
+      data: { communityId: req.params.id, authorId: user.id, text, pinned: pinned ?? false, expiresAt }
+    });
+    res.json(ann);
+  }));
+
+  app.delete("/communities/:id/announcements/:annId", asyncRoute(async (req, res) => {
+    const wallet = walletFromAuth(req);
+    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
+    const user = await prisma.user.findUnique({ where: { wallet } });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    const ann = await prisma.announcement.findUnique({ where: { id: req.params.annId } });
+    if (!ann || ann.communityId !== req.params.id) return res.status(404).json({ error: "Not found" });
+    const member = await prisma.communityMember.findUnique({
+      where: { userId_communityId: { userId: user.id, communityId: req.params.id } }
+    });
+    if (!member || member.role !== "lead") return res.status(403).json({ error: "Only leads can delete announcements" });
+    await prisma.announcement.delete({ where: { id: ann.id } });
+    res.json({ ok: true });
+  }));
+
+  // ── Push subscriptions ─────────────────────────────────────────
+  app.post("/me/push-subscription", asyncRoute(async (req, res) => {
+    const wallet = walletFromAuth(req);
+    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
+    const user = await prisma.user.findUnique({ where: { wallet } });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    const { endpoint, p256dh, auth } = z.object({
+      endpoint: z.string().url(),
+      p256dh: z.string(),
+      auth: z.string()
+    }).parse(req.body);
+    await prisma.pushSubscription.upsert({
+      where: { userId_endpoint: { userId: user.id, endpoint } },
+      update: { p256dh, auth },
+      create: { userId: user.id, endpoint, p256dh, auth }
+    });
+    res.json({ ok: true });
+  }));
+
+  app.delete("/me/push-subscription", asyncRoute(async (req, res) => {
+    const wallet = walletFromAuth(req);
+    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
+    const user = await prisma.user.findUnique({ where: { wallet } });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    const { endpoint } = z.object({ endpoint: z.string() }).parse(req.body);
+    await prisma.pushSubscription.deleteMany({ where: { userId: user.id, endpoint } });
+    res.json({ ok: true });
+  }));
+
+  // ── Redemption ────────────────────────────────────────────────
+  app.post("/me/redeem", asyncRoute(async (req, res) => {
+    const wallet = walletFromAuth(req);
+    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
+    const user = await prisma.user.findUnique({ where: { wallet } });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    const { communityId, points } = z.object({
+      communityId: z.string(),
+      points: z.number().int().min(100)
+    }).parse(req.body);
+    const scoreAgg = await prisma.score.aggregate({
+      where: { userId: user.id, communityId },
+      _sum: { points: true }
+    });
+    const redeemed = await prisma.redemption.aggregate({
+      where: { userId: user.id, communityId },
+      _sum: { pointsBurned: true }
+    });
+    const available = (scoreAgg._sum.points ?? 0) - (redeemed._sum.pointsBurned ?? 0);
+    if (available < points) return res.status(400).json({ error: `Only ${available} redeemable points available` });
+    const redemption = await prisma.redemption.create({
+      data: { userId: user.id, communityId, pointsBurned: points, status: "pending" }
+    });
+    res.json({ ok: true, redemptionId: redemption.id, pointsBurned: points, available: available - points });
+  }));
+
+  app.get("/me/redeem", asyncRoute(async (req, res) => {
+    const wallet = walletFromAuth(req);
+    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
+    const user = await prisma.user.findUnique({ where: { wallet } });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    const communityId = String(req.query.communityId || process.env.DEMO_COMMUNITY_ID || "demo-community");
+    const [scoreAgg, redeemed, history] = await Promise.all([
+      prisma.score.aggregate({ where: { userId: user.id, communityId }, _sum: { points: true } }),
+      prisma.redemption.aggregate({ where: { userId: user.id, communityId }, _sum: { pointsBurned: true } }),
+      prisma.redemption.findMany({ where: { userId: user.id, communityId }, orderBy: { createdAt: "desc" }, take: 20 })
+    ]);
+    const total = scoreAgg._sum.points ?? 0;
+    const burned = redeemed._sum.pointsBurned ?? 0;
+    res.json({ total, burned, available: total - burned, history });
+  }));
+
+  // ── Per-raid leaderboard ──────────────────────────────────────
+  app.get("/communities/:id/feed/:postId/leaderboard", asyncRoute(async (req, res) => {
+    const post = await prisma.feedPost.findUnique({ where: { id: req.params.postId } });
+    if (!post || post.communityId !== req.params.id) return res.status(404).json({ error: "Post not found" });
+    const missionId = post.missionId;
+    if (!missionId) return res.json({ entries: [] });
+    const submissions = await prisma.submission.findMany({
+      where: { task: { missionId } },
+      include: { user: { select: { wallet: true, displayName: true } } },
+      orderBy: { pointsAwarded: "desc" }
+    });
+    const byUser = new Map<string, { wallet: string; displayName: string | null; points: number; proofs: number }>();
+    for (const sub of submissions) {
+      const key = sub.userId;
+      const existing = byUser.get(key);
+      if (existing) {
+        existing.points += sub.pointsAwarded;
+        existing.proofs += 1;
+      } else {
+        byUser.set(key, { wallet: sub.user.wallet, displayName: sub.user.displayName, points: sub.pointsAwarded, proofs: 1 });
+      }
+    }
+    const entries = [...byUser.values()].sort((a, b) => b.points - a.points).slice(0, 20);
+    res.json({ entries, missionId });
+  }));
+
+  // ── Admin: rate-limit abuse flags ─────────────────────────────
+  app.get("/admin/abuse-flags", asyncRoute(async (req, res) => {
+    const wallet = walletFromAuth(req);
+    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
+    // Simple admin check: env whitelist or first lead across any community
+    const allowed = process.env.ADMIN_WALLETS?.split(",").map((w) => w.trim().toLowerCase()) ?? [];
+    if (allowed.length > 0 && !allowed.includes(wallet.toLowerCase())) {
+      return res.status(403).json({ error: "Not admin" });
+    }
+    const since = new Date(Date.now() - 24 * 3600_000);
+    const heavyShillers = await prisma.feedShill.groupBy({
+      by: ["userId"],
+      where: { createdAt: { gte: since } },
+      _count: { id: true },
+      orderBy: { _count: { id: "desc" } },
+      having: { id: { _count: { gt: 50 } } }
+    });
+    const heavyProofers = await prisma.submission.groupBy({
+      by: ["userId"],
+      where: { submittedAt: { gte: since } },
+      _count: { id: true },
+      orderBy: { _count: { id: "desc" } },
+      having: { id: { _count: { gt: 20 } } }
+    });
+    const userIds = [...new Set([...heavyShillers.map((r) => r.userId), ...heavyProofers.map((r) => r.userId)])];
+    const users = await prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, wallet: true, displayName: true } });
+    const userMap = new Map(users.map((u) => [u.id, u]));
+    res.json({
+      heavyShillers: heavyShillers.map((r) => ({ ...userMap.get(r.userId), shills24h: r._count.id })),
+      heavyProofers: heavyProofers.map((r) => ({ ...userMap.get(r.userId), proofs24h: r._count.id }))
+    });
+  }));
+
+  app.get("/admin/stats", asyncRoute(async (req, res) => {
+    const wallet = walletFromAuth(req);
+    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
+    const allowed = process.env.ADMIN_WALLETS?.split(",").map((w) => w.trim().toLowerCase()) ?? [];
+    if (allowed.length > 0 && !allowed.includes(wallet.toLowerCase())) {
+      return res.status(403).json({ error: "Not admin" });
+    }
+    const since24h = new Date(Date.now() - 24 * 3600_000);
+    const [users, communities, shills24h, proofs24h, activeMembers24h] = await Promise.all([
+      prisma.user.count(),
+      prisma.community.count(),
+      prisma.feedShill.count({ where: { createdAt: { gte: since24h } } }),
+      prisma.submission.count({ where: { submittedAt: { gte: since24h } } }),
+      prisma.feedShill.groupBy({ by: ["userId"], where: { createdAt: { gte: since24h } } }).then((rows) => rows.length)
+    ]);
+    res.json({ users, communities, shills24h, proofs24h, activeMembers24h });
   }));
 
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {

@@ -4,12 +4,18 @@ import ConnectWalletButton from "../../ConnectWalletButton";
 import CopyLink from "../../CopyLink";
 import FocusRaidCard from "../../FocusRaidCard";
 import LinkXHandle from "../../LinkXHandle";
+import StreakCounter from "../../StreakCounter";
+import AchievementBadges, { useAchievements } from "../../AchievementBadges";
+import ProofJobStatus from "../../ProofJobStatus";
+import RedeemPoints from "../../RedeemPoints";
 import Link from "next/link";
 import { useContributorProfile } from "../../../lib/useContributorProfile";
 import { shortAddress } from "../../../lib/session";
+import { getStoredCommunityId } from "../../../lib/community";
 
 export default function MyOpsPage() {
   const { profile, loading, connected, wallet, label, reload } = useContributorProfile();
+  const achievements = useAchievements();
 
   if (!connected) {
     return (
@@ -35,6 +41,9 @@ export default function MyOpsPage() {
       </p>
       {loading && !profile && <p className="muted">Loading your ops...</p>}
       {profile?.focus && <FocusRaidCard focus={profile.focus} compact />}
+      <StreakCounter />
+      <AchievementBadges earned={achievements} />
+      <ProofJobStatus communityId={getStoredCommunityId()} />
       <LinkXHandle
         xHandle={profile?.xHandle}
         xVerified={profile?.xVerified}
@@ -126,6 +135,7 @@ export default function MyOpsPage() {
           </div>
         </div>
       ))}
+      <RedeemPoints />
       <h2>Shill history</h2>
       {(profile?.shills?.length ?? 0) === 0 && (
         <div className="card">

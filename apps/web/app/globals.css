@@ -48,9 +48,14 @@ a.btn,
 .muted {
   color: #a1a1aa;
 }
-.card.next-play {
-  border-color: #f97316;
+.card {
+  background: #111114cc;
+  border: 1px solid #27272a;
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 12px;
 }
+.card.next-play {
 .row {
   display: flex;
   gap: 12px;
@@ -339,4 +344,141 @@ label {
 @keyframes live-in {
   from { transform: translateY(12px); opacity: 0; }
   to { transform: translateY(0); opacity: 1; }
+}
+
+/* ── Onboarding wizard ────────────────────────────────────── */
+.onboarding-wizard { max-width: 560px; margin: 0 auto; }
+.onboarding-steps {
+  display: flex;
+  gap: 0;
+  margin-bottom: 24px;
+  border: 1px solid #27272a;
+  border-radius: 12px;
+  overflow: hidden;
+}
+.onboarding-step {
+  flex: 1;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 12px 16px;
+  font-size: 13px;
+  color: #52525b;
+  background: #111114;
+  border-right: 1px solid #27272a;
+}
+.onboarding-step:last-child { border-right: 0; }
+.onboarding-step.active { color: #f4f4f5; background: #18181b; }
+.onboarding-step-num {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: #27272a;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.onboarding-step.active .onboarding-step-num { background: #2563eb; }
+
+/* ── Announcement banner ─────────────────────────────────── */
+.announcement-stack { display: flex; flex-direction: column; gap: 0; }
+.announcement-banner {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 24px;
+  background: #18181b;
+  border-bottom: 1px solid #3f3f46;
+  font-size: 13px;
+}
+.announcement-banner.pinned { border-bottom-color: #f97316; background: #1c1410cc; }
+.btn.small { padding: 4px 10px; font-size: 12px; }
+
+/* ── Streak counter ──────────────────────────────────────── */
+.streak-counter {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 14px;
+  background: #111114cc;
+  border: 1px solid #27272a;
+  border-radius: 12px;
+  margin-bottom: 12px;
+}
+.streak-icon { font-size: 22px; }
+
+/* ── Achievements ────────────────────────────────────────── */
+.achievement-badges { margin-bottom: 16px; }
+.achievement-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.achievement-badge {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 12px;
+  background: #18181b;
+  border: 1px solid #3f3f46;
+  border-radius: 999px;
+  font-size: 13px;
+  cursor: default;
+}
+.achievement-icon { font-size: 16px; }
+.achievement-title { font-weight: 600; }
+
+/* ── Raid leaderboard ────────────────────────────────────── */
+.raid-leaderboard { margin-top: 12px; }
+.raid-lb-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid #27272a;
+  font-size: 14px;
+}
+.raid-lb-row:last-child { border-bottom: 0; }
+.raid-lb-name { flex: 1; }
+
+/* ── Copy block (X verify) ───────────────────────────────── */
+.copy-block {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  background: #111114;
+  border: 1px solid #3f3f46;
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin: 10px 0;
+  font-family: monospace;
+  font-size: 13px;
+}
+.copy-block code { flex: 1; color: #a1a1aa; word-break: break-all; }
+
+/* ── Error text ──────────────────────────────────────────── */
+.error { color: #f87171; font-size: 13px; }
+.input { width: 100%; padding: 8px; border-radius: 8px; border: 1px solid #3f3f46; background: #18181b; color: #f4f4f5; }
+
+/* ── Mobile tweaks ───────────────────────────────────────── */
+@media (max-width: 640px) {
+  .nav { gap: 10px; padding: 12px 16px; font-size: 13px; overflow-x: auto; flex-wrap: nowrap; }
+  .container { padding: 16px; }
+  .stats { grid-template-columns: repeat(2, 1fr); }
+  .proof-paste { flex-direction: column; align-items: flex-start; }
+  .proof-paste input { max-width: 100%; }
+  .kol-grid { grid-template-columns: 1fr; }
+  .onboarding-steps { flex-direction: column; border-radius: 8px; }
+  .onboarding-step { border-right: 0; border-bottom: 1px solid #27272a; }
+  .onboarding-step:last-child { border-bottom: 0; }
+  .row { gap: 8px; }
+  h1 { font-size: 1.6rem; }
+  h2 { font-size: 1.2rem; }
+  .stat strong { font-size: 22px; }
+  .dex-chart { height: 280px; }
 }

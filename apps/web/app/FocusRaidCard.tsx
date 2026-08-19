@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import RaidScoreboard from "./RaidScoreboard";
+import RaidLeaderboard from "./RaidLeaderboard";
 import type { FocusRaid } from "../lib/shillAction";
+import { getStoredCommunityId } from "../lib/community";
 
 export default function FocusRaidCard({
   focus,
@@ -11,6 +13,7 @@ export default function FocusRaidCard({
   focus: FocusRaid;
   compact?: boolean;
 }) {
+  const communityId = getStoredCommunityId();
   return (
     <div className="card focus-raid">
       <div className="kicker">Focus raid — everyone here</div>
@@ -25,6 +28,9 @@ export default function FocusRaidCard({
         <Link className="btn" href="/app/feed">Open raid feed</Link>
         <a className="btn secondary" href={focus.url} target="_blank" rel="noreferrer">Open on X</a>
       </div>
+      {focus.postId && communityId && (
+        <RaidLeaderboard communityId={communityId} postId={focus.postId} compact />
+      )}
     </div>
   );
 }

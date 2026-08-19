@@ -62,6 +62,12 @@ model User {
   checkIns     MissionCheckIn[]
   feedShills   FeedShill[]
   focusedCommunities Community[] @relation("CommunityFocusBy")
+  proofJobs    ProofJob[]
+  streak       UserStreak?
+  achievements UserAchievement[]
+  pushSubscriptions PushSubscription[]
+  redemptions  Redemption[]
+  announcements Announcement[] @relation("AnnouncementAuthor")
 }
 
 model Community {
@@ -91,6 +97,9 @@ model Community {
   kolWatches       KolWatch[]
   feedPosts        FeedPost[]
   feedShills       FeedShill[]
+  proofJobs        ProofJob[]
+  announcements    Announcement[]
+  redemptions      Redemption[]
 
   @@unique([chainId, contractAddress])
 }
@@ -139,6 +148,7 @@ model FeedPost {
   mission          Mission?     @relation(fields: [missionId], references: [id], onDelete: SetNull)
   shills           FeedShill[]
   focusedBy        Community[]  @relation("CommunityFocus")
+  proofJobs        ProofJob[]
 
   @@unique([communityId, url])
   @@index([communityId, postedAt])
@@ -316,4 +326,101 @@ model ShortLinkClick {
   ipHash      String?
   createdAt   DateTime @default(now())
   shortLink   ShortLink @relation(fields: [shortLinkId], references: [id], onDelete: Cascade)
+}
+
+enum ProofJobStatus {
+  PENDING
+  CHECKING
+  SCORED
+  FAILED
+}
+
+model ProofJob {
+  id          String         @id @default(cuid())
+  userId      String
+  communityId String
+  feedPostId  String
+  status      ProofJobStatus @default(PENDING)
+  proofUrl    String?
+  pointsAwarded Int?
+  failReason  String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  community   Community      @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  feedPost    FeedPost       @relation(fields: [feedPostId], references: [id], onDelete: Cascade)
+
+  @@index([userId, communityId])
+  @@index([feedPostId])
+}
+
+model UserStreak {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  currentStreak Int     @default(0)
+  longestStreak Int     @default(0)
+  lastActivityDate DateTime?
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Achievement {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  title       String
+  description String
+  icon        String?
+  earnedBy    UserAchievement[]
+}
+
+model UserAchievement {
+  id            String      @id @default(cuid())
+  userId        String
+  achievementId String
+  earnedAt      DateTime    @default(now())
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  achievement   Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, achievementId])
+  @@index([userId])
+}
+
+model Announcement {
+  id          String   @id @default(cuid())
+  communityId String
+  authorId    String?
+  text        String
+  pinned      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  expiresAt   DateTime?
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  author      User?    @relation("AnnouncementAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([communityId, createdAt])
+}
+
+model PushSubscription {
+  id          String   @id @default(cuid())
+  userId      String
+  endpoint    String
+  p256dh      String
+  auth        String
+  createdAt   DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, endpoint])
+}
+
+model Redemption {
+  id          String   @id @default(cuid())
+  userId      String
+  communityId String
+  pointsBurned Int
+  txHash      String?
+  status      String   @default("pending")
+  createdAt   DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@index([userId, communityId])
 }

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import ActivityFeed from "../ActivityFeed";
+import AnnouncementBanner from "../AnnouncementBanner";
 import FocusRaidCard from "../FocusRaidCard";
 import { getRequestCommunityId } from "../../lib/communityServer";
 import { apiGetSafe } from "../../lib/api";
@@ -34,6 +35,7 @@ export default async function MissionBoardPage() {
         Use the <Link href="/app/feed">raid feed</Link> to click KOL posts and mentions. This board is the scored raid that opens from those posts.
       </p>
       {community.focus && <FocusRaidCard focus={community.focus} />}
+      <AnnouncementBanner communityId={communityId} />
       {sorted.length === 0 && (
         <div className="card">
           <p>No community bound yet, so a daily pulse could not be created. Bind a mint first, then ingest a signal to overlay a raid.</p>

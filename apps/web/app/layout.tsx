@@ -19,6 +19,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           <Link href="/app/admin/signals">Signals</Link>
           <Link href="/app/admin/attribution">Attribution</Link>
           <Link href="/app/admin/notifications">Alerts</Link>
+          <Link href="/app/admin/dashboard">Admin</Link>
           <ConnectWalletButton />
         </nav>
         <CommunityBanner />
