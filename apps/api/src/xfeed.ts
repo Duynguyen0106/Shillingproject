@@ -319,6 +319,56 @@ export async function fetchHandleTweets(handle: string): Promise<NormalizedPost[
   return [];
 }
 
+export async function fetchReplyByHandle(
+  handle: string,
+  inReplyToId: string,
+  windowMs = 15 * 60 * 1000
+): Promise<NormalizedPost | null> {
+  const provider = configuredFeedProvider();
+  const since = new Date(Date.now() - windowMs);
+  if (provider === "twitterapi.io") {
+    const query = `from:${handle} in_reply_to_tweet_id:${inReplyToId}`;
+    try {
+      const body = await getJson(
+        `https://api.twitterapi.io/twitter/tweet/advanced_search?query=${encodeURIComponent(query)}&queryType=Latest`,
+        { "X-API-Key": process.env.TWITTERAPI_IO_KEY as string }
+      );
+      const tweets = tweetsFromBody(body);
+      const normalized = tweets
+        .map((tweet) => normalizeProviderTweet(tweet, handle))
+        .filter((post): post is NormalizedPost => Boolean(post) && post !== null && new Date(post.postedAt).getTime() >= since.getTime());
+      return normalized[0] ?? null;
+    } catch {
+      return null;
+    }
+  }
+  if (provider === "x") {
+    const query = `from:${handle} conversation_id:${inReplyToId}`;
+    try {
+      const body = await getJson(
+        `https://api.twitter.com/2/tweets/search/recent?query=${encodeURIComponent(query)}&max_results=10&tweet.fields=created_at,author_id,public_metrics,in_reply_to_user_id&expansions=author_id&user.fields=username,name,public_metrics`,
+        { Authorization: `Bearer ${process.env.X_BEARER_TOKEN}` }
+      ) as {
+        data?: { id: string; text: string; created_at?: string; author_id?: string; public_metrics?: Record<string, number> }[];
+        includes?: { users?: { id: string; username: string; name?: string; public_metrics?: { followers_count?: number } }[] };
+      };
+      const users = new Map((body.includes?.users ?? []).map((user) => [user.id, user]));
+      const matches = (body.data ?? [])
+        .filter((tweet) => !tweet.created_at || new Date(tweet.created_at).getTime() >= since.getTime())
+        .map((tweet) => {
+          const author = tweet.author_id ? users.get(tweet.author_id) : undefined;
+          const tHandle = author?.username?.toLowerCase() ?? handle;
+          return normalizeProviderTweet({ ...tweet, author: { ...author, userName: tHandle } }, tHandle);
+        })
+        .filter((post): post is NormalizedPost => Boolean(post));
+      return matches[0] ?? null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 export async function fetchMentionTweets(ticker?: string | null, contractAddress?: string | null): Promise<NormalizedPost[]> {
   const query = mentionSearchQuery(ticker, contractAddress);
   if (!query) return [];

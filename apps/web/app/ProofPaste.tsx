@@ -12,6 +12,7 @@ export default function ProofPaste({
   postId,
   youShilled = false,
   youProved = false,
+  xVerified = false,
   compact = false,
   onStatus
 }: {
@@ -19,6 +20,7 @@ export default function ProofPaste({
   postId: string;
   youShilled?: boolean;
   youProved?: boolean;
+  xVerified?: boolean;
   compact?: boolean;
   onStatus?: (message: string) => void;
 }) {
@@ -46,6 +48,30 @@ export default function ProofPaste({
   }
   if (!connected) {
     return <p className="muted">Connect a wallet to score your reply.</p>;
+  }
+
+  if (xVerified) {
+    return (
+      <div className={`proof-paste${compact ? " compact" : ""}`}>
+        <span className="badge">Auto-scoring your reply…</span>
+        <span className="muted">We&apos;ll detect your reply on X and score it automatically. Usually within 2 min.</span>
+        {!compact && (
+          <details>
+            <summary className="muted">Score manually instead</summary>
+            <form className="proof-paste compact" onSubmit={(event) => void submit(event)}>
+              <input
+                value={proofUrl}
+                onChange={(event) => setProofUrl(event.target.value)}
+                placeholder={PLACEHOLDER}
+                aria-label="Your reply status URL"
+              />
+              <button className="btn" type="submit" disabled={busy}>Score reply</button>
+              {note && <span className="muted">{note}</span>}
+            </form>
+          </details>
+        )}
+      </div>
+    );
   }
 
   async function submit(event?: FormEvent) {

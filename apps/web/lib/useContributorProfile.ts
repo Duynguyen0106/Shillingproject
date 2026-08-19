@@ -60,6 +60,9 @@ export type ContributorProfile = {
   id: string;
   wallet: string;
   displayName?: string | null;
+  xHandle?: string | null;
+  xVerified?: boolean;
+  xVerifyToken?: string | null;
   communityId: string;
   points: number;
   rank: number | null;
@@ -78,22 +81,23 @@ export function useContributorProfile() {
   const [profile, setProfile] = useState<ContributorProfile | null>(null);
   const [loading, setLoading] = useState(false);
 
+  const load = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/me?communityId=${getStoredCommunityId()}`, { headers: authHeaders() });
+      setProfile(res.ok ? await res.json() : null);
+    } catch {
+      setProfile(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (!connected) {
       setProfile(null);
       return;
     }
-    const load = async () => {
-      setLoading(true);
-      try {
-        const res = await fetch(`${API_BASE}/me?communityId=${getStoredCommunityId()}`, { headers: authHeaders() });
-        setProfile(res.ok ? await res.json() : null);
-      } catch {
-        setProfile(null);
-      } finally {
-        setLoading(false);
-      }
-    };
     void load();
     window.addEventListener("shillops-ops", load);
     window.addEventListener("shillops-session", load);
@@ -105,5 +109,5 @@ export function useContributorProfile() {
     };
   }, [connected, wallet]);
 
-  return { profile, loading, connected, wallet, label };
+  return { profile, loading, connected, wallet, label, reload: load };
 }

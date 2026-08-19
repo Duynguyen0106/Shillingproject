@@ -3,12 +3,13 @@
 import ConnectWalletButton from "../../ConnectWalletButton";
 import CopyLink from "../../CopyLink";
 import FocusRaidCard from "../../FocusRaidCard";
+import LinkXHandle from "../../LinkXHandle";
 import Link from "next/link";
 import { useContributorProfile } from "../../../lib/useContributorProfile";
 import { shortAddress } from "../../../lib/session";
 
 export default function MyOpsPage() {
-  const { profile, loading, connected, wallet, label } = useContributorProfile();
+  const { profile, loading, connected, wallet, label, reload } = useContributorProfile();
 
   if (!connected) {
     return (
@@ -34,6 +35,12 @@ export default function MyOpsPage() {
       </p>
       {loading && !profile && <p className="muted">Loading your ops...</p>}
       {profile?.focus && <FocusRaidCard focus={profile.focus} compact />}
+      <LinkXHandle
+        xHandle={profile?.xHandle}
+        xVerified={profile?.xVerified}
+        xVerifyToken={profile?.xVerifyToken}
+        onUpdated={reload}
+      />
       {profile?.nextPlay && (
         <div className="card next-play">
           <div className="kicker">Your next play</div>

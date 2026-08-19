@@ -32,7 +32,7 @@ import { liveListenerCount, postsCreatedSince, publishLiveFocus, publishLiveProo
 import { attachShillState, serializeShillHistory } from "./shill";
 import { attachProofState, buildShillCopy, buildShillKit, liveRaiderIds, pickRaidReplyTask, proofIsReplyToRaidTarget, raidReplyAlreadyScored } from "./shillkit";
 import { isFocusLive, serializeFocus, focusChangeAllowed, shillAllowedDuringFocus } from "./focus";
-import { applyFeedFilters, applyKolFilters, attachKolStats, configuredFeedProvider, fetchUserProfile, mentionMatches, parseXHandle, parseXStatusUrl, postHeat } from "./xfeed";
+import { applyFeedFilters, applyKolFilters, attachKolStats, configuredFeedProvider, fetchReplyByHandle, fetchUserProfile, mentionMatches, parseXHandle, parseXStatusUrl, postHeat } from "./xfeed";
 
 const appUrl = process.env.APP_URL || "http://localhost:3000";
 const sessions = new Map<string, { wallet: string }>();
@@ -969,6 +969,99 @@ function serializeWarRoom(mission: {
   };
 }
 
+const LIVE_RAID_MS = 15 * 60 * 1000;
+
+async function scheduleReplyAutoScore(
+  prisma: PrismaClient,
+  opts: {
+    userId: string;
+    xHandle: string;
+    communityId: string;
+    postId: string;
+    postUrl: string;
+    postKind: string;
+  }
+) {
+  const parsed = parseXStatusUrl(opts.postUrl);
+  if (!parsed?.id) return;
+  const delays = [30_000, 90_000, 4 * 60_000, 8 * 60_000];
+  for (const delay of delays) {
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    const existing = await prisma.submission?.findFirst?.({
+      where: {
+        userId: opts.userId,
+        task: { mission: { feedPosts: { some: { id: opts.postId } } } }
+      }
+    });
+    if (existing) return;
+    const reply = await fetchReplyByHandle(opts.xHandle, parsed.id, LIVE_RAID_MS).catch(() => null);
+    if (!reply) continue;
+    const post = await prisma.feedPost.findUnique({ where: { id: opts.postId } });
+    if (!post) return;
+    const community = await prisma.community.findUnique({ where: { id: opts.communityId } });
+    if (!community) return;
+    let missionId = post.missionId;
+    if (!missionId) {
+      const mission = await spawnRaidFromFeedPost(
+        prisma,
+        community,
+        post,
+        post.kind === FeedPostKind.MENTION ? SignalType.MENTION_SPIKE : SignalType.KOL_POST
+      );
+      missionId = mission.id;
+      await prisma.feedPost.update({ where: { id: post.id }, data: { missionId } });
+    }
+    const mission = await prisma.mission.findUnique({
+      where: { id: missionId },
+      include: { tasks: { include: { submissions: { where: { userId: opts.userId }, select: { id: true, taskId: true } } } } }
+    });
+    if (!mission || mission.status !== MissionStatus.ACTIVE) return;
+    const submitted = mission.tasks.filter((task) => (task.submissions?.length ?? 0) > 0).map((task) => task.id);
+    if (raidReplyAlreadyScored(mission.tasks, post.url, submitted)) return;
+    const task = pickRaidReplyTask(mission.tasks, post.url, submitted);
+    if (!task) return;
+    const existingSub = await prisma.submission?.findFirst?.({ where: { taskId: task.id, userId: opts.userId } });
+    if (existingSub) return;
+    await prisma.missionClaim.upsert({
+      where: { missionId_userId: { missionId: mission.id, userId: opts.userId } },
+      update: {},
+      create: { missionId: mission.id, userId: opts.userId }
+    });
+    const submission = await recordVerifiedSubmission(prisma, {
+      task: { ...task, mission },
+      userId: opts.userId,
+      proofUrl: reply.url,
+      proofText: reply.text.slice(0, 500),
+      engagementValue: 25
+    });
+    const scoredRows = await prisma.submission?.findMany?.({
+      where: { task: { missionId: mission.id } },
+      include: {
+        task: { select: { missionId: true, details: true } },
+        user: { select: { wallet: true, displayName: true } }
+      }
+    }) ?? [];
+    const scored = attachProofState([{ id: post.id, missionId: mission.id }], scoredRows, opts.userId)[0];
+    const provedCount = Math.max(scored.provedCount, 1);
+    const liveProvedCount = Math.max(scored.liveProvedCount, 1);
+    const user = await prisma.user.findUnique({ where: { id: opts.userId } });
+    publishLiveProof({
+      type: "proof",
+      communityId: opts.communityId,
+      postId: post.id,
+      url: opts.postUrl,
+      provedCount,
+      liveProvedCount,
+      raider: {
+        wallet: user?.wallet ?? "",
+        displayName: user?.displayName ?? null
+      },
+      pointsAwarded: submission.pointsAwarded
+    });
+    return;
+  }
+}
+
 export function createApp(prisma: PrismaClient) {
   const app = express();
   app.use(cors());
@@ -1123,6 +1216,53 @@ export function createApp(prisma: PrismaClient) {
         user.id
       )
     });
+  }));
+
+  // ── X handle linking ──────────────────────────────────────────
+  app.post("/me/x-handle", asyncRoute(async (req, res) => {
+    const wallet = walletFromAuth(req);
+    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
+    const raw = String(req.body?.handle ?? "");
+    const handle = parseXHandle(raw);
+    if (!handle) return res.status(400).json({ error: "Invalid X handle" });
+    const user = await prisma.user.findUnique({ where: { wallet } });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    const taken = await prisma.user.findFirst({ where: { xHandle: handle, id: { not: user.id } } });
+    if (taken) return res.status(409).json({ error: "Handle already linked to another account" });
+    const token = nanoid(12);
+    await prisma.user.update({ where: { id: user.id }, data: { xHandle: handle, xVerified: false, xVerifyToken: token } });
+    const verifyTweetText = `Verifying my @ShillOps wallet: ${token}`;
+    res.json({ handle, verified: false, verifyToken: token, verifyTweetText });
+  }));
+
+  app.post("/me/x-handle/verify", asyncRoute(async (req, res) => {
+    const wallet = walletFromAuth(req);
+    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
+    const user = await prisma.user.findUnique({ where: { wallet } });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    if (!user.xHandle) return res.status(400).json({ error: "No X handle linked yet" });
+    if (user.xVerified) return res.json({ verified: true, handle: user.xHandle });
+    if (!user.xVerifyToken) return res.status(400).json({ error: "No verify token found" });
+    const provider = configuredFeedProvider();
+    if (provider === "none") {
+      await prisma.user.update({ where: { id: user.id }, data: { xVerified: true, xVerifyToken: null } });
+      return res.json({ verified: true, handle: user.xHandle, note: "X API not configured — trusted without tweet check" });
+    }
+    const { fetchHandleTweets } = await import("./xfeed");
+    const recentTweets = await fetchHandleTweets(user.xHandle).catch(() => [] as import("./xfeed").NormalizedPost[]);
+    const verified = recentTweets.some((t) => t.text.includes(user.xVerifyToken!));
+    if (!verified) return res.status(400).json({ verified: false, error: "Verification tweet not found. Please post the tweet and try again." });
+    await prisma.user.update({ where: { id: user.id }, data: { xVerified: true, xVerifyToken: null } });
+    res.json({ verified: true, handle: user.xHandle });
+  }));
+
+  app.delete("/me/x-handle", asyncRoute(async (req, res) => {
+    const wallet = walletFromAuth(req);
+    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
+    const user = await prisma.user.findUnique({ where: { wallet } });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    await prisma.user.update({ where: { id: user.id }, data: { xHandle: null, xVerified: false, xVerifyToken: null } });
+    res.json({ ok: true });
   }));
 
   app.post("/communities", asyncRoute(async (req, res) => {
@@ -1690,6 +1830,17 @@ export function createApp(prisma: PrismaClient) {
     const focus = prior === 0 && !isFocusLive(community)
       ? await setFocusRaid(prisma, community, post, user)
       : await loadFocusPayload(prisma, community, [post]);
+    // Schedule auto-score if user has a verified X handle
+    if (user.xVerified && user.xHandle && prior === 0) {
+      scheduleReplyAutoScore(prisma, {
+        userId: user.id,
+        xHandle: user.xHandle,
+        communityId: community.id,
+        postId: post.id,
+        postUrl: post.url,
+        postKind: post.kind as string
+      }).catch(() => undefined);
+    }
     res.json({
       url: post.url,
       missionId: mission.id,

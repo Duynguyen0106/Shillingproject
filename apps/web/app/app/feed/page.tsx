@@ -101,6 +101,7 @@ function compact(value?: number | null): string {
 export default function RaidFeedPage() {
   const { connected, wallet } = useConnectedWallet();
   const [feed, setFeed] = useState<FeedResponse | null>(null);
+  const [xVerified, setXVerified] = useState(false);
   const [handle, setHandle] = useState("");
   const [status, setStatus] = useState("");
   const [kind, setKind] = useState<"all" | "KOL_POST" | "MENTION">("all");
@@ -146,13 +147,22 @@ export default function RaidFeedPage() {
 
   useEffect(() => {
     void load();
+    // Load xVerified status for auto-score indication
+    if (connected) {
+      fetch(`${API_BASE}/me?communityId=${getStoredCommunityId()}`, { headers: authHeaders() })
+        .then((r) => r.ok ? r.json() : null)
+        .then((data) => { if (data?.xVerified) setXVerified(true); })
+        .catch(() => undefined);
+    } else {
+      setXVerified(false);
+    }
     const timer = window.setInterval(() => void load(), 8_000);
     window.addEventListener("shillops-community", load);
     return () => {
       window.clearInterval(timer);
       window.removeEventListener("shillops-community", load);
     };
-  }, [load]);
+  }, [load, connected]);
 
   useEffect(() => {
     const onLive = (message: Event) => {
@@ -435,6 +445,7 @@ export default function RaidFeedPage() {
             postId={feed.focus.postId}
             youShilled={Boolean(feed.focus.youShilled || feed.posts.find((post) => post.id === feed.focus!.postId)?.youShilled)}
             youProved={Boolean(feed.focus.youProved || feed.posts.find((post) => post.id === feed.focus!.postId)?.youProved)}
+            xVerified={xVerified}
             onStatus={setStatus}
           />
         </div>
@@ -661,6 +672,7 @@ export default function RaidFeedPage() {
               postId={post.id}
               youShilled={Boolean(post.youShilled)}
               youProved={Boolean(post.youProved)}
+              xVerified={xVerified}
               onStatus={setStatus}
             />
           )}
