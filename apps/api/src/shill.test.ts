@@ -6,9 +6,9 @@ describe("coin shill history", () => {
     const posts = attachShillState(
       [{ id: "p1" }, { id: "p2" }],
       [
-        { feedPostId: "p1", userId: "u1", createdAt: "2026-08-19T01:00:00.000Z", reshill: true, user: { wallet: "0xme", displayName: "Me" } },
-        { feedPostId: "p1", userId: "u1", createdAt: "2026-08-19T00:00:00.000Z", user: { wallet: "0xme", displayName: "Me" } },
-        { feedPostId: "p1", userId: "u2", createdAt: "2026-08-19T00:30:00.000Z", user: { wallet: "0x2", displayName: "Bo" } }
+        { feedPostId: "p1", userId: "u1", createdAt: new Date().toISOString(), reshill: true, user: { wallet: "0xme", displayName: "Me" } },
+        { feedPostId: "p1", userId: "u1", createdAt: new Date(Date.now() - 60_000).toISOString(), user: { wallet: "0xme", displayName: "Me" } },
+        { feedPostId: "p1", userId: "u2", createdAt: new Date(Date.now() - 120_000).toISOString(), user: { wallet: "0x2", displayName: "Bo" } }
       ],
       "u1"
     );
@@ -16,7 +16,7 @@ describe("coin shill history", () => {
       youShilled: true,
       youShillCount: 2,
       raiderCount: 2,
-      shillCount: 3
+      liveRaiderCount: 2
     });
     expect(posts[1].youShilled).toBe(false);
   });

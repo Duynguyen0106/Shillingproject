@@ -36,7 +36,20 @@ export type LiveFeedEvent = {
   kol: LiveKol | null;
 };
 
-type LiveListener = (event: LiveFeedEvent) => void;
+export type LiveRaidEvent = {
+  type: "shill";
+  communityId: string;
+  postId: string;
+  url: string;
+  reshill: boolean;
+  raider: { wallet: string; displayName: string | null };
+  liveRaiderCount: number;
+  raiderCount: number;
+};
+
+export type LiveBusEvent = LiveFeedEvent | LiveRaidEvent;
+
+type LiveListener = (event: LiveBusEvent) => void;
 
 const listeners = new Map<string, Set<LiveListener>>();
 
@@ -112,6 +125,10 @@ export function toLiveFeedEvent(
 }
 
 export function publishLivePost(event: LiveFeedEvent) {
+  for (const listener of listeners.get(event.communityId) ?? []) listener(event);
+}
+
+export function publishLiveRaid(event: LiveRaidEvent) {
   for (const listener of listeners.get(event.communityId) ?? []) listener(event);
 }
 

@@ -3,6 +3,7 @@ import {
   liveListenerCount,
   postsCreatedSince,
   publishLivePost,
+  publishLiveRaid,
   subscribeLiveFeed,
   toLiveFeedEvent
 } from "./livefeed";
@@ -35,7 +36,9 @@ describe("live raid feed", () => {
 
   it("pushes new posts to community subscribers", () => {
     const seen: string[] = [];
-    const stop = subscribeLiveFeed("demo-community", (event) => seen.push(event.post.id));
+    const stop = subscribeLiveFeed("demo-community", (event) => {
+      if (event.type === "post") seen.push(event.post.id);
+    });
     expect(liveListenerCount("demo-community")).toBe(1);
     publishLivePost(toLiveFeedEvent("demo-community", {
       id: "fresh",
@@ -56,6 +59,25 @@ describe("live raid feed", () => {
     expect(seen).toEqual(["fresh"]);
     stop();
     expect(liveListenerCount("demo-community")).toBe(0);
+  });
+
+  it("pushes live shills so the feed can pile on", async () => {
+    const seen: Array<{ postId: string; liveRaiderCount: number }> = [];
+    const stop = subscribeLiveFeed("demo-community", (event) => {
+      if (event.type === "shill") seen.push({ postId: event.postId, liveRaiderCount: event.liveRaiderCount });
+    });
+    publishLiveRaid({
+      type: "shill",
+      communityId: "demo-community",
+      postId: "p1",
+      url: "https://x.com/whale/status/1",
+      reshill: false,
+      raider: { wallet: "0xdemo", displayName: "Raider" },
+      liveRaiderCount: 3,
+      raiderCount: 5
+    });
+    expect(seen).toEqual([{ postId: "p1", liveRaiderCount: 3 }]);
+    stop();
   });
 
   it("keeps only posts ingested after since", () => {

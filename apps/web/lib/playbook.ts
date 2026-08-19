@@ -53,14 +53,22 @@ export function playMeta(details?: string | null): { id: PlayId | null; kind: Pl
 }
 
 export function proofPlaceholder(details?: string | null): string {
+  const id = playIdFromDetails(details);
+  if (id === "reply-narrative" || id === "quote-signal" || id === "fud-ratio") {
+    return "https://x.com/yourhandle/status/";
+  }
   const target = targetUrlFromDetails(details);
   if (target) return target;
-  const id = playIdFromDetails(details);
   if (id === "x-community") return "https://x.com/i/communities/";
   if (id === "dex-comment") return "https://dexscreener.com/";
   if (id === "share-telegram") return "https://t.me/";
   if (id === "discord-boost") return "https://discord.com/";
   return "https://x.com/example/status/1";
+}
+
+export function isRaidReplyPlay(details?: string | null): boolean {
+  const id = playIdFromDetails(details);
+  return id === "reply-narrative" || id === "quote-signal" || id === "fud-ratio";
 }
 
 export function targetCtaLabel(details?: string | null): string {

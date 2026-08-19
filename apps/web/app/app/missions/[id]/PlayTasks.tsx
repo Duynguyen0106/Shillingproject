@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import SubmissionForm from "./SubmissionForm";
 import { API_BASE } from "../../../../lib/config";
-import { playMeta, targetCtaLabel, targetUrlFromDetails } from "../../../../lib/playbook";
+import { playMeta, targetCtaLabel, targetUrlFromDetails, isRaidReplyPlay } from "../../../../lib/playbook";
 import { authHeaders } from "../../../../lib/session";
 import { useConnectedWallet } from "../../../../lib/useConnectedWallet";
 
@@ -83,9 +83,14 @@ export default function PlayTasks({
               const target = targetUrlFromDetails(task.details);
               if (target) {
                 return (
-                  <p>
-                    <a href={target} target="_blank" rel="noreferrer">{targetCtaLabel(task.details)}</a>
-                  </p>
+                  <>
+                    <p>
+                      <a href={target} target="_blank" rel="noreferrer">{targetCtaLabel(task.details)}</a>
+                    </p>
+                    {isRaidReplyPlay(task.details) && (
+                      <p className="muted">Proof must be the status URL of YOUR reply or quote, not this KOL post.</p>
+                    )}
+                  </>
                 );
               }
               if (meta.id === "invite-raider") {

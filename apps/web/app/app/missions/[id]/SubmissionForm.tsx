@@ -4,7 +4,7 @@ import { useState } from "react";
 import ConnectWalletButton from "../../../ConnectWalletButton";
 import { API_BASE } from "../../../../lib/config";
 import { authHeaders, notifyOps } from "../../../../lib/session";
-import { proofPlaceholder } from "../../../../lib/playbook";
+import { proofPlaceholder, isRaidReplyPlay, targetUrlFromDetails } from "../../../../lib/playbook";
 import { useContributorProfile } from "../../../../lib/useContributorProfile";
 
 export default function SubmissionForm({
@@ -18,6 +18,8 @@ export default function SubmissionForm({
 }) {
   const { wallet, label, connected, profile } = useContributorProfile();
   const xCommunityId = taskDetails?.startsWith("x-community:") ? taskDetails.slice("x-community:".length).split("\n")[0] : null;
+  const raidReply = isRaidReplyPlay(taskDetails);
+  const raidTarget = targetUrlFromDetails(taskDetails);
   const [proofUrl, setProofUrl] = useState(proofPlaceholder(taskDetails));
   const [proofText, setProofText] = useState("");
   const [status, setStatus] = useState("");
@@ -80,7 +82,12 @@ export default function SubmissionForm({
         <p className="muted">
           Bonus task: paste a post from{" "}
           <a href={`https://x.com/i/communities/${xCommunityId}`} target="_blank" rel="noreferrer">the linked X Community</a>.
-          Reply/KOL tasks on this mission still accept any x.com status URL.
+        </p>
+      )}
+      {raidReply && (
+        <p className="muted">
+          Paste YOUR reply/quote status URL
+          {raidTarget ? <> — not <a href={raidTarget} target="_blank" rel="noreferrer">the KOL post</a></> : ""}.
         </p>
       )}
       <label>

@@ -1251,6 +1251,62 @@ describe("X Community bind and bonus proof", () => {
     expect(res.status).toBe(200);
     expect(createSubmission).toHaveBeenCalledTimes(1);
   });
+
+  it("rejects using the KOL post URL as reply proof", async () => {
+    const createSubmission = vi.fn();
+    const app = createApp({
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "user-1", wallet: "0xdemo" }) },
+      missionTask: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "task-reply",
+          missionId: "mission-1",
+          title: "Reply the narrative",
+          details: "play:reply-narrative\ntarget:https://x.com/whale/status/99",
+          actionType: ActionType.REPLY,
+          createdAt: new Date(),
+          mission: { communityId: "demo-community", priority: Priority.HIGH, status: "ACTIVE" }
+        })
+      },
+      missionClaim: { findUnique: vi.fn().mockResolvedValue({ id: "claim-1" }) },
+      submission: { create: createSubmission }
+    } as never);
+    const same = await request(app).post("/tasks/task-reply/submissions").send({
+      wallet: "0xdemo",
+      proofUrl: "https://x.com/whale/status/99"
+    });
+    expect(same.status).toBe(400);
+    expect(createSubmission).not.toHaveBeenCalled();
+  });
+
+  it("accepts a different status URL as the reply proof", async () => {
+    const createSubmission = vi.fn().mockResolvedValue({ id: "sub-r", pointsAwarded: 10 });
+    const app = createApp({
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "user-1", wallet: "0xdemo" }) },
+      missionTask: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "task-reply",
+          missionId: "mission-1",
+          title: "Reply the narrative",
+          details: "play:reply-narrative\ntarget:https://x.com/whale/status/99",
+          actionType: ActionType.REPLY,
+          createdAt: new Date(),
+          mission: { communityId: "demo-community", priority: Priority.HIGH, status: "ACTIVE" }
+        })
+      },
+      missionClaim: { findUnique: vi.fn().mockResolvedValue({ id: "claim-1" }) },
+      submission: { create: createSubmission },
+      score: { create: vi.fn(), groupBy: vi.fn().mockResolvedValue([]) },
+      engagementEvent: { create: vi.fn() },
+      leaderboardSnapshot: { create: vi.fn() },
+      communityMember: { updateMany: vi.fn() }
+    } as never);
+    const res = await request(app).post("/tasks/task-reply/submissions").send({
+      wallet: "0xdemo",
+      proofUrl: "https://x.com/raider/status/100"
+    });
+    expect(res.status).toBe(200);
+    expect(createSubmission).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("raid feed", () => {
@@ -1275,6 +1331,7 @@ describe("raid feed", () => {
     const res = await request(app).get("/communities/demo-community/feed");
     expect(res.status).toBe(200);
     expect(res.body.posts[0].url).toBe("https://x.com/random/status/2");
+    expect(res.body.shillCopy).toContain("$PEPE");
     expect(res.body.kols[0].handle).toBe("examplekol");
   });
 
@@ -1451,6 +1508,21 @@ describe("raid feed", () => {
     expect(res.status).toBe(200);
     expect(res.body.posts[0].youShilled).toBe(true);
     expect(res.body.shillHistory[0].you).toBe(true);
+    expect(typeof res.body.posts[0].liveRaiderCount).toBe("number");
+  });
+
+  it("returns the pinned talk track as shill copy", async () => {
+    const app = createApp({
+      community: { findUnique: vi.fn().mockResolvedValue({ id: "demo-community", ticker: "PEPE", contractAddress: "0xabc" }) },
+      feedPost: { findMany: vi.fn().mockResolvedValue([]) },
+      kolWatch: { findMany: vi.fn().mockResolvedValue([]) },
+      mission: { findFirst: vi.fn().mockResolvedValue({ pinText: "We own the replies." }) }
+    } as never);
+    const res = await request(app).get("/communities/demo-community/feed");
+    expect(res.status).toBe(200);
+    expect(res.body.talkTrack).toBe("We own the replies.");
+    expect(res.body.shillCopy).toContain("We own the replies.");
+    expect(res.body.shillCopy).toContain("$PEPE");
   });
 
   it("records a first shill and refuses a duplicate unless reshill is set", async () => {
@@ -1473,6 +1545,7 @@ describe("raid feed", () => {
           .mockResolvedValueOnce(1)
           .mockResolvedValueOnce(1),
         findFirst: vi.fn().mockResolvedValue({ createdAt: "2026-08-19T01:00:00.000Z" }),
+        findMany: vi.fn().mockResolvedValue([{ userId: "u1", createdAt: new Date() }]),
         create: createShill
       }
     } as never);
@@ -1480,11 +1553,14 @@ describe("raid feed", () => {
     const first = await request(app).post("/communities/demo-community/feed/p1/shill").send({ wallet: "0xdemo" });
     expect(first.status).toBe(200);
     expect(first.body.alreadyShilled).toBe(false);
+    expect(first.body.kit.copy).toContain("$PEPE");
+    expect(first.body.kit.intentUrl).toContain("in_reply_to=1");
     expect(createShill).toHaveBeenCalledTimes(1);
 
     const dup = await request(app).post("/communities/demo-community/feed/p1/shill").send({ wallet: "0xdemo" });
     expect(dup.status).toBe(200);
     expect(dup.body.alreadyShilled).toBe(true);
+    expect(dup.body.kit.intentUrl).toContain("in_reply_to=1");
     expect(createShill).toHaveBeenCalledTimes(1);
 
     const again = await request(app).post("/communities/demo-community/feed/p1/shill").send({ wallet: "0xdemo", reshill: true });

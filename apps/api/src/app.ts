@@ -28,8 +28,9 @@ import {
   type CanonicalToken
 } from "./dexscreener";
 import { ingestNormalizedPost, kolProfileData, parseWatchHandle, refreshAllCommunityFeeds, refreshCommunityFeed } from "./feed";
-import { liveListenerCount, postsCreatedSince, snapshotKol, subscribeLiveFeed } from "./livefeed";
+import { liveListenerCount, postsCreatedSince, publishLiveRaid, snapshotKol, subscribeLiveFeed } from "./livefeed";
 import { attachShillState, serializeShillHistory } from "./shill";
+import { buildShillCopy, buildShillKit, liveRaiderIds, proofIsReplyToRaidTarget } from "./shillkit";
 import { applyFeedFilters, applyKolFilters, attachKolStats, configuredFeedProvider, fetchUserProfile, mentionMatches, parseXHandle, parseXStatusUrl, postHeat } from "./xfeed";
 
 const appUrl = process.env.APP_URL || "http://localhost:3000";
@@ -735,6 +736,19 @@ async function touchMemberActivity(prisma: PrismaClient, userId: string, communi
   });
 }
 
+async function loadTalkTrack(prisma: PrismaClient, communityId: string, missionId?: string | null) {
+  if (missionId) {
+    const mission = await prisma.mission?.findUnique?.({ where: { id: missionId }, select: { pinText: true } });
+    if (mission?.pinText) return mission.pinText;
+  }
+  const pinned = await prisma.mission?.findFirst?.({
+    where: { communityId, pinText: { not: null } },
+    orderBy: { pinnedAt: "desc" },
+    select: { pinText: true }
+  });
+  return pinned?.pinText ?? null;
+}
+
 async function promoteLead(prisma: PrismaClient, communityId: string, userId: string) {
   await prisma.communityMember.updateMany({
     where: { communityId, role: "lead" },
@@ -1145,7 +1159,7 @@ export function createApp(prisma: PrismaClient) {
     });
     const since = filters.since ? new Date(filters.since) : null;
     const viewerWallet = resolveActorWallet(req, typeof req.query.wallet === "string" ? req.query.wallet : undefined);
-    const [rawPosts, rawKols, shills, viewer] = await Promise.all([
+    const [rawPosts, rawKols, shills, viewer, pinned] = await Promise.all([
       prisma.feedPost?.findMany?.({
         where: { communityId: community.id },
         orderBy: { postedAt: "desc" },
@@ -1165,7 +1179,12 @@ export function createApp(prisma: PrismaClient) {
         orderBy: { createdAt: "desc" },
         take: 400
       }) ?? [],
-      viewerWallet ? prisma.user?.findUnique?.({ where: { wallet: viewerWallet } }) : null
+      viewerWallet ? prisma.user?.findUnique?.({ where: { wallet: viewerWallet } }) : null,
+      prisma.mission?.findFirst?.({
+        where: { communityId: community.id, pinText: { not: null } },
+        orderBy: { pinnedAt: "desc" },
+        select: { pinText: true }
+      }) ?? null
     ]);
     const fresh = postsCreatedSince(rawPosts, since && !Number.isNaN(since.getTime()) ? since : null);
     const mapped = applyFeedFilters(fresh, filters).slice(0, 50).map((post) => ({
@@ -1188,10 +1207,17 @@ export function createApp(prisma: PrismaClient) {
         }
         : { id: item.feedPostId }
     }));
+    const talkTrack = pinned?.pinText ?? null;
     res.json({
       provider: configuredFeedProvider(),
       ticker: community.ticker,
       contractAddress: community.contractAddress,
+      talkTrack,
+      shillCopy: buildShillCopy({
+        ticker: community.ticker,
+        contractAddress: community.contractAddress,
+        pinText: talkTrack
+      }),
       filters,
       serverTime: new Date().toISOString(),
       live: true,
@@ -1216,7 +1242,7 @@ export function createApp(prisma: PrismaClient) {
       if (typeof res.flushHeaders === "function") res.flushHeaders();
       res.write(`event: hello\ndata: ${JSON.stringify({ ok: true, communityId: community.id, listeners: liveListenerCount(community.id) + 1 })}\n\n`);
       const send = (event: { type: string }) => {
-        res.write(`event: post\ndata: ${JSON.stringify(event)}\n\n`);
+        res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
       };
       const unsub = subscribeLiveFeed(community.id, send);
       const ping = setInterval(() => {
@@ -1350,6 +1376,13 @@ export function createApp(prisma: PrismaClient) {
     });
     if (!member) return res.status(403).json({ error: "Join this mint before shilling" });
     const prior = await prisma.feedShill?.count?.({ where: { feedPostId: post.id, userId: user.id } }) ?? 0;
+    const pinText = await loadTalkTrack(prisma, community.id, post.missionId);
+    const kit = buildShillKit({
+      ticker: community.ticker,
+      contractAddress: community.contractAddress,
+      pinText,
+      url: post.url
+    });
     if (prior > 0 && !reshill) {
       const last = await prisma.feedShill?.findFirst?.({
         where: { feedPostId: post.id, userId: user.id },
@@ -1361,7 +1394,8 @@ export function createApp(prisma: PrismaClient) {
         lastShilledAt: last?.createdAt ?? null,
         url: post.url,
         missionId: post.missionId,
-        claimed: true
+        claimed: true,
+        kit
       });
     }
     let missionId = post.missionId;
@@ -1397,6 +1431,22 @@ export function createApp(prisma: PrismaClient) {
         reshill: prior > 0
       }
     });
+    const rows = await prisma.feedShill?.findMany?.({
+      where: { feedPostId: post.id },
+      select: { userId: true, createdAt: true }
+    }) ?? [];
+    const liveRaiderCount = liveRaiderIds(rows).length;
+    const raiderCount = new Set(rows.map((row) => row.userId)).size;
+    publishLiveRaid({
+      type: "shill",
+      communityId: community.id,
+      postId: post.id,
+      url: post.url,
+      reshill: prior > 0,
+      raider: { wallet, displayName: user.displayName ?? null },
+      liveRaiderCount,
+      raiderCount
+    });
     await touchMemberActivity(prisma, user.id, community.id);
     res.json({
       url: post.url,
@@ -1405,6 +1455,9 @@ export function createApp(prisma: PrismaClient) {
       alreadyShilled: prior > 0,
       reshill: prior > 0,
       youShillCount: prior + 1,
+      liveRaiderCount,
+      raiderCount,
+      kit,
       shill,
       shortLink
     });
@@ -1755,6 +1808,8 @@ export function createApp(prisma: PrismaClient) {
         error: `This bonus task needs a post from the linked X Community (https://x.com/i/communities/${requiredCommunityId}). Reply/KOL proofs on this mission can still be any x.com status URL.`
       });
     }
+    const raidProof = proofIsReplyToRaidTarget(proofUrl, task.details);
+    if (!raidProof.ok) return res.status(400).json({ error: raidProof.error });
     const isEarly = Date.now() - task.createdAt.getTime() < 10 * 60 * 1000;
     const duplicatePenalty = Boolean(proofText && proofText.length > 0 && proofText.toLowerCase().includes("copy"));
     const points = scoreSubmission({ actionType: task.actionType, priority: task.mission.priority, isEarly, duplicatePenalty, engagementValue });

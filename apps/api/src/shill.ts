@@ -1,3 +1,5 @@
+import { liveRaiderIds } from "./shillkit";
+
 export type ShillActor = {
   wallet: string;
   displayName?: string | null;
@@ -48,14 +50,25 @@ export function attachShillState<T extends { id: string }>(
     const rows = byPost.get(post.id) ?? [];
     const yours = viewerUserId ? rows.filter((row) => row.userId === viewerUserId) : [];
     const raiders = new Set(rows.map((row) => row.userId));
+    const liveIds = liveRaiderIds(rows);
     return {
       ...post,
       shillCount: rows.length,
       raiderCount: raiders.size,
+      liveRaiderCount: liveIds.length,
       youShilled: yours.length > 0,
       youShillCount: yours.length,
       youLastShilledAt: yours[0] ? isoDate(yours[0].createdAt) : null,
       lastShilledAt: rows[0] ? isoDate(rows[0].createdAt) : null,
+      liveRaiders: liveIds.slice(0, 6).map((userId) => {
+        const row = rows.find((item) => item.userId === userId);
+        return {
+          wallet: row?.user?.wallet ?? "",
+          displayName: row?.user?.displayName ?? null,
+          at: row ? isoDate(row.createdAt) : new Date().toISOString(),
+          you: Boolean(viewerUserId && userId === viewerUserId)
+        };
+      }),
       recentShills: rows.slice(0, 4).map((row) => ({
         wallet: row.user?.wallet ?? "",
         displayName: row.user?.displayName ?? null,

@@ -1,0 +1,39 @@
+import { describe, expect, it } from "vitest";
+import { buildShillCopy, buildShillKit, liveRaiderIds, proofIsReplyToRaidTarget, xReplyIntentUrl } from "./shillkit";
+
+describe("shill kit", () => {
+  it("builds talk track copy with ticker and CA", () => {
+    expect(buildShillCopy({ ticker: "PEPE", contractAddress: "0xabc", pinText: "We own the replies." })).toBe(
+      "We own the replies. $PEPE 0xabc"
+    );
+    expect(buildShillCopy({ ticker: "PEPE", contractAddress: "0xabc" })).toContain("$PEPE");
+  });
+
+  it("opens X as a reply to the KOL status", () => {
+    const kit = buildShillKit({
+      ticker: "PEPE",
+      pinText: "Push it",
+      url: "https://x.com/whale/status/99"
+    });
+    expect(kit.intentUrl).toContain("in_reply_to=99");
+    expect(kit.intentUrl).toContain("text=");
+    expect(xReplyIntentUrl("https://x.com/whale/status/99", "hi")).toContain("in_reply_to=99");
+  });
+
+  it("counts unique raiders in the live window", () => {
+    const now = Date.parse("2026-08-19T01:00:00.000Z");
+    expect(liveRaiderIds([
+      { userId: "a", createdAt: "2026-08-19T00:55:00.000Z" },
+      { userId: "a", createdAt: "2026-08-19T00:50:00.000Z" },
+      { userId: "b", createdAt: "2026-08-19T00:58:00.000Z" },
+      { userId: "c", createdAt: "2026-08-18T00:00:00.000Z" }
+    ], now)).toEqual(["a", "b"]);
+  });
+
+  it("rejects proof that is the KOL post instead of a reply", () => {
+    const details = "play:reply-narrative\ntarget:https://x.com/whale/status/99";
+    expect(proofIsReplyToRaidTarget("https://x.com/whale/status/99", details).ok).toBe(false);
+    expect(proofIsReplyToRaidTarget("https://x.com/me/status/100", details)).toEqual({ ok: true });
+    expect(proofIsReplyToRaidTarget("https://x.com/me/status/1", "play:share-telegram").ok).toBe(true);
+  });
+});
