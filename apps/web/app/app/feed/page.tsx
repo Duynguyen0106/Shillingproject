@@ -7,8 +7,9 @@ import { API_BASE } from "../../../lib/config";
 import { getStoredCommunityId } from "../../../lib/community";
 import { LIVE_POST_EVENT, compactCount, type LiveFeedEvent, type LiveKol } from "../../../lib/liveFeed";
 import { authHeaders, getStoredWallet, shortAddress } from "../../../lib/session";
-import { copyText, FOCUS_EVENT, RAID_EVENT, clearFocus, runFocus, runShill, type FocusRaid } from "../../../lib/shillAction";
+import { copyText, FOCUS_EVENT, PROOF_EVENT, RAID_EVENT, clearFocus, runFocus, runShill, type FocusRaid } from "../../../lib/shillAction";
 import { useConnectedWallet } from "../../../lib/useConnectedWallet";
+import ProofPaste from "../../ProofPaste";
 
 type FeedPost = {
   id: string;
@@ -34,6 +35,7 @@ type FeedPost = {
   youShilled?: boolean;
   youShillCount?: number;
   youLastShilledAt?: string | null;
+  youProved?: boolean;
   lastShilledAt?: string | null;
   liveRaiderCount?: number;
   liveRaiders?: Array<{ wallet: string; displayName?: string | null; at: string; you?: boolean }>;
@@ -177,13 +179,13 @@ export default function RaidFeedPage() {
         reshill?: boolean;
       }>).detail;
       if (!event?.postId || event.communityId !== getStoredCommunityId()) return;
+      const mine = Boolean(wallet && event.raider?.wallet && event.raider.wallet.toLowerCase() === wallet.toLowerCase());
       setFeed((current) => {
         if (!current) return current;
         return {
           ...current,
           posts: current.posts.map((post) => {
             if (post.id !== event.postId) return post;
-            const mine = Boolean(wallet && event.raider?.wallet && event.raider.wallet.toLowerCase() === wallet.toLowerCase());
             const liveRaiders = [...(post.liveRaiders ?? [])];
             if (event.raider && !liveRaiders.some((row) => row.wallet === event.raider!.wallet)) {
               liveRaiders.unshift({ wallet: event.raider.wallet, displayName: event.raider.displayName, at: new Date().toISOString(), you: mine });
@@ -196,7 +198,10 @@ export default function RaidFeedPage() {
               youShillCount: mine ? (post.youShillCount ?? 0) + 1 : post.youShillCount,
               liveRaiders: liveRaiders.slice(0, 6)
             };
-          })
+          }),
+          focus: current.focus?.postId === event.postId && mine
+            ? { ...current.focus, youShilled: true }
+            : current.focus
         };
       });
     };
@@ -210,12 +215,32 @@ export default function RaidFeedPage() {
       if (event?.communityId && event.communityId !== getStoredCommunityId()) return;
       setFeed((current) => current ? {
         ...current,
-        focus: event?.focus ?? null,
+        focus: event?.focus
+          ? {
+            ...event.focus,
+            youShilled: Boolean(event.focus.youShilled || current.posts.find((post) => post.id === event.focus!.postId)?.youShilled),
+            youProved: Boolean(event.focus.youProved || current.posts.find((post) => post.id === event.focus!.postId)?.youProved)
+          }
+          : null,
         posts: current.posts.map((post) => ({ ...post, focused: event?.focus?.postId === post.id }))
       } : current);
     };
     window.addEventListener(FOCUS_EVENT, onFocus);
-    return () => window.removeEventListener(FOCUS_EVENT, onFocus);
+    const onProof = (message: Event) => {
+      const event = (message as CustomEvent<{ communityId?: string; postId?: string }>).detail;
+      if (event?.communityId && event.communityId !== getStoredCommunityId()) return;
+      if (!event?.postId) return;
+      setFeed((current) => current ? {
+        ...current,
+        focus: current.focus?.postId === event.postId ? { ...current.focus, youProved: true } : current.focus,
+        posts: current.posts.map((post) => post.id === event.postId ? { ...post, youProved: true } : post)
+      } : current);
+    };
+    window.addEventListener(PROOF_EVENT, onProof);
+    return () => {
+      window.removeEventListener(FOCUS_EVENT, onFocus);
+      window.removeEventListener(PROOF_EVENT, onProof);
+    };
   }, []);
 
   async function addKol() {
@@ -283,7 +308,7 @@ export default function RaidFeedPage() {
       return;
     }
     setStatus(result.missionId
-      ? "Talk track copied. Reply on X, then paste YOUR reply URL on the mission."
+      ? "Talk track copied. Reply on X, then paste YOUR reply URL here."
       : "Talk track copied. Reply composer is open.");
     await load();
   }
@@ -334,7 +359,7 @@ export default function RaidFeedPage() {
       <div className="kicker">Do not hunt on X</div>
       <h1>Raid Feed</h1>
       <p className="muted">
-        New KOL posts pop in live. First shill locks the room onto one tweet. Other posts stay readable but cannot be shilled until the CTO lead moves the focus. Paste YOUR reply URL on the mission after you post.
+        New KOL posts pop in live. First shill locks the room onto one tweet. Other posts stay readable but cannot be shilled until the CTO lead moves the focus. After you reply, paste YOUR status URL on the raid — not the KOL tweet.
       </p>
       {feed && (
         <div className="row">
@@ -360,14 +385,14 @@ export default function RaidFeedPage() {
           <div className="kicker">Focus raid — everyone here</div>
           <h3>Reply to @{feed.focus.authorHandle}</h3>
           <p>{feed.focus.text}</p>
-          <p className="muted">Same tweet, many replies. Other posts cannot be shilled until the CTO lead moves this. After you reply, paste YOUR status URL on the mission.</p>
+          <p className="muted">Same tweet, many replies. Other posts cannot be shilled until the CTO lead moves this. After you reply, paste YOUR status URL here — not the KOL tweet.</p>
           <div className="row">
             <button className="btn" disabled={busy} onClick={() => void runShill({
               communityId: getStoredCommunityId(),
               postId: feed.focus!.postId
             }).then((result) => {
               if (!result.ok) setStatus(result.error || "Could not claim this post.");
-              else setStatus("Everyone is on this tweet. Talk track copied — reply here.");
+              else setStatus("Everyone is on this tweet. Talk track copied — reply here, then paste YOUR reply URL.");
               return load();
             })}>
               Shill this tweet
@@ -377,6 +402,13 @@ export default function RaidFeedPage() {
               <button className="btn secondary" disabled={busy} onClick={() => void stopFocus()}>Clear focus</button>
             )}
           </div>
+          <ProofPaste
+            communityId={getStoredCommunityId()}
+            postId={feed.focus.postId}
+            youShilled={Boolean(feed.focus.youShilled || feed.posts.find((post) => post.id === feed.focus!.postId)?.youShilled)}
+            youProved={Boolean(feed.focus.youProved || feed.posts.find((post) => post.id === feed.focus!.postId)?.youProved)}
+            onStatus={setStatus}
+          />
         </div>
       )}
       {feed?.provider === "none" && (
@@ -542,6 +574,7 @@ export default function RaidFeedPage() {
             {post.youShilled
               ? `You shilled this${post.youShillCount && post.youShillCount > 1 ? ` ${post.youShillCount}×` : ""}${post.youLastShilledAt ? ` · ${timeAgo(post.youLastShilledAt)}` : ""}`
               : "You have not shilled this post yet"}
+            {post.youProved ? " · reply scored" : ""}
             {(post.liveRaiderCount ?? 0) > 0 ? ` · ${post.liveRaiderCount} on this now` : ""}
             {(post.raiderCount ?? 0) > 0 ? ` · ${post.raiderCount} raider${post.raiderCount === 1 ? "" : "s"}` : ""}
           </p>
@@ -561,7 +594,7 @@ export default function RaidFeedPage() {
                   postId: feed.focus!.postId
                 }).then((result) => {
                   setStatus(result.ok
-                    ? "Talk track copied. Reply to the focus tweet, then paste YOUR reply URL on the mission."
+                    ? "Talk track copied. Reply to the focus tweet, then paste YOUR reply URL here."
                     : (result.error || "Could not claim this post."));
                   return load();
                 })}
@@ -588,10 +621,20 @@ export default function RaidFeedPage() {
               </button>
             )}
             {post.youShilled && <span className="badge ok">Already shilled</span>}
+            {post.youProved && <span className="badge ok">Reply scored</span>}
             {post.missionId && (
-              <Link href={`/app/missions/${post.missionId}`}>{focused ? "Submit your reply" : "Mission"}</Link>
+              <Link href={`/app/missions/${post.missionId}`}>{focused ? "Other plays" : "Mission"}</Link>
             )}
           </div>
+          {!dim && (
+            <ProofPaste
+              communityId={getStoredCommunityId()}
+              postId={post.id}
+              youShilled={Boolean(post.youShilled)}
+              youProved={Boolean(post.youProved)}
+              onStatus={setStatus}
+            />
+          )}
         </div>
         );
       })}

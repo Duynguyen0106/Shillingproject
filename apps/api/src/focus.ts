@@ -11,6 +11,7 @@ export type FocusPost = {
   authorHandle: string;
   text?: string | null;
   kind?: string | null;
+  missionId?: string | null;
 };
 
 export type FocusState = {
@@ -22,6 +23,7 @@ export type FocusState = {
   at: string;
   until: string;
   by: { wallet: string; displayName: string | null } | null;
+  missionId?: string | null;
 };
 
 export function focusUntil(focusAt: Date | string, windowMs = FOCUS_RAID_MS): Date {
@@ -87,6 +89,7 @@ export function serializeFocus(input: {
     kind: input.post.kind ?? null,
     at: new Date(input.focusAt).toISOString(),
     until: focusUntil(input.focusAt, windowMs).toISOString(),
-    by: input.by ? { wallet: input.by.wallet, displayName: input.by.displayName ?? null } : null
+    by: input.by ? { wallet: input.by.wallet, displayName: input.by.displayName ?? null } : null,
+    missionId: input.post.missionId ?? null
   };
 }

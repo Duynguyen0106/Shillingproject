@@ -5,22 +5,24 @@ import { useEffect, useRef, useState } from "react";
 import { API_BASE } from "../lib/config";
 import { getStoredCommunityId } from "../lib/community";
 import { compactCount, dispatchLivePost, type LiveFeedEvent, type LiveKol, type LivePost } from "../lib/liveFeed";
-import { FOCUS_EVENT, RAID_EVENT, dispatchFocus, runShill, type FocusRaid } from "../lib/shillAction";
+import { FOCUS_EVENT, PROOF_EVENT, RAID_EVENT, dispatchFocus, runShill, type FocusRaid } from "../lib/shillAction";
 import { getStoredWallet } from "../lib/session";
 import { useConnectedWallet } from "../lib/useConnectedWallet";
+import ProofPaste from "./ProofPaste";
 
-type Toast = LiveFeedEvent & { toastId: string; youShilled?: boolean; focused?: boolean };
+type Toast = LiveFeedEvent & { toastId: string; youShilled?: boolean; youProved?: boolean; focused?: boolean };
 
 function kolFrom(event: LiveFeedEvent): LiveKol | null {
   return event.kol ?? event.post.kol ?? null;
 }
 
-function toastFromFocus(communityId: string, focus: FocusRaid, youShilled: boolean): Toast {
+function toastFromFocus(communityId: string, focus: FocusRaid, youShilled: boolean, youProved: boolean): Toast {
   return {
     type: "post",
     communityId,
     toastId: `focus-${focus.postId}`,
     youShilled,
+    youProved,
     focused: true,
     kol: null,
     post: {
@@ -42,11 +44,11 @@ export default function LiveFeedToasts() {
   const [live, setLive] = useState(false);
   const [busyId, setBusyId] = useState("");
   const [note, setNote] = useState("");
-  const [proofMissionId, setProofMissionId] = useState("");
   const seen = useRef(new Set<string>());
   const since = useRef<string | null>(null);
   const primed = useRef(false);
   const shilled = useRef(new Set<string>());
+  const proved = useRef(new Set<string>());
   const focusId = useRef<string | null>(null);
 
   useEffect(() => {
@@ -64,7 +66,12 @@ export default function LiveFeedToasts() {
         if (emit && changed) dispatchFocus(getStoredCommunityId(), null);
         return;
       }
-      const sticky = toastFromFocus(getStoredCommunityId(), next, shilled.current.has(next.postId));
+      const sticky = toastFromFocus(
+        getStoredCommunityId(),
+        next,
+        shilled.current.has(next.postId) || Boolean(next.youShilled),
+        proved.current.has(next.postId) || Boolean(next.youProved)
+      );
       setToasts((current) => [sticky, ...current.filter((item) => !item.focused && item.post.id !== next.postId)].slice(0, 3));
       if (emit && changed) dispatchFocus(getStoredCommunityId(), next);
     }
@@ -82,6 +89,7 @@ export default function LiveFeedToasts() {
         ...event,
         toastId: `${event.post.id}-${Date.now()}`,
         youShilled: shilled.current.has(event.post.id),
+        youProved: proved.current.has(event.post.id),
         focused: focusId.current === event.post.id
       };
       setToasts((current) => [toast, ...current.filter((item) => item.focused)].slice(0, 3));
@@ -103,12 +111,15 @@ export default function LiveFeedToasts() {
       const body = await res.json() as {
         serverTime?: string;
         focus?: FocusRaid | null;
-        posts?: Array<LivePost & { kol?: LiveKol | null; youShilled?: boolean }>;
+        posts?: Array<LivePost & { kol?: LiveKol | null; youShilled?: boolean; youProved?: boolean }>;
       };
+      if (body.focus?.youShilled) shilled.current.add(body.focus.postId);
+      if (body.focus?.youProved) proved.current.add(body.focus.postId);
       if ((body.focus?.postId ?? null) !== focusId.current) applyFocus(body.focus ?? null);
       if (body.serverTime && !since.current) since.current = body.serverTime;
       for (const post of body.posts ?? []) {
         if (post.youShilled) shilled.current.add(post.id);
+        if (post.youProved) proved.current.add(post.id);
         pushEvent({
           type: "post",
           communityId,
@@ -169,6 +180,7 @@ export default function LiveFeedToasts() {
       since.current = null;
       primed.current = false;
       shilled.current = new Set();
+      proved.current = new Set();
       applyFocus(null);
       void pull(false);
       connect();
@@ -180,12 +192,21 @@ export default function LiveFeedToasts() {
     };
     window.addEventListener("shillops-community", onCommunity);
     window.addEventListener(FOCUS_EVENT, onFocus);
+    const onProof = (message: Event) => {
+      const event = (message as CustomEvent<{ communityId?: string; postId?: string }>).detail;
+      if (event?.communityId && event.communityId !== getStoredCommunityId()) return;
+      if (!event?.postId) return;
+      proved.current.add(event.postId);
+      setToasts((current) => current.map((item) => item.post.id === event.postId ? { ...item, youProved: true } : item));
+    };
+    window.addEventListener(PROOF_EVENT, onProof);
     return () => {
       closed = true;
       source?.close();
       window.clearInterval(pollTimer);
       window.removeEventListener("shillops-community", onCommunity);
       window.removeEventListener(FOCUS_EVENT, onFocus);
+      window.removeEventListener(PROOF_EVENT, onProof);
     };
   }, []);
 
@@ -201,11 +222,10 @@ export default function LiveFeedToasts() {
       setNote(result.error || "Shill failed.");
       return;
     }
-    if (result.missionId) setProofMissionId(result.missionId);
     if (result.alreadyShilled && !reshill) {
       shilled.current.add(toast.post.id);
       setToasts((current) => current.map((item) => item.post.id === toast.post.id ? { ...item, youShilled: true } : item));
-      setNote("You already shilled this. Reshill if you want another reply.");
+      setNote("You already shilled this. Paste YOUR reply URL, or reshill for another hit.");
       return;
     }
     shilled.current.add(toast.post.id);
@@ -219,14 +239,10 @@ export default function LiveFeedToasts() {
     <div className="live-toasts" aria-live="polite">
       {live && <span className="sr-only">Raid feed is live</span>}
       {note && <p className="live-toast-note">{note}</p>}
-      {proofMissionId && (
-        <p className="live-toast-note">
-          <Link href={`/app/missions/${proofMissionId}`}>Paste your reply URL on the mission</Link>
-        </p>
-      )}
       {toasts.map((toast) => {
         const kol = kolFrom(toast);
         const already = toast.youShilled || shilled.current.has(toast.post.id);
+        const scored = toast.youProved || proved.current.has(toast.post.id);
         const focused = Boolean(toast.focused || (focus && focus.postId === toast.post.id));
         return (
           <article key={toast.toastId} className={`live-toast${focused ? " focus" : ""}`}>
@@ -241,8 +257,9 @@ export default function LiveFeedToasts() {
                   {focused ? "Everyone here" : toast.post.kind === "MENTION" ? "Mention" : "New KOL post"}
                 </span>
                 {already && <span className="badge ok">Already shilled</span>}
+                {scored && <span className="badge ok">Reply scored</span>}
               </div>
-              {focused && <small>Reply this tweet — do not split across other posts.</small>}
+              {focused && <small>Reply this tweet — then paste YOUR status URL here, not the KOL post.</small>}
               {kol && !focused && (
                 <small>
                   {kol.displayName ? `${kol.displayName} · ` : ""}
@@ -262,6 +279,16 @@ export default function LiveFeedToasts() {
                 )}
                 <Link className="btn secondary" href="/app/feed">Feed</Link>
               </div>
+              {already && (
+                <ProofPaste
+                  compact
+                  communityId={toast.communityId}
+                  postId={toast.post.id}
+                  youShilled
+                  youProved={scored}
+                  onStatus={setNote}
+                />
+              )}
             </div>
           </article>
         );

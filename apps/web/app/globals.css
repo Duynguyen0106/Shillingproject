@@ -197,6 +197,23 @@ label {
   border-bottom-color: #f97316;
   background: #1c1410cc;
 }
+.proof-paste {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.proof-paste input {
+  max-width: 360px;
+  margin: 0;
+}
+.proof-paste.compact {
+  margin-top: 0;
+}
+.proof-paste.compact input {
+  max-width: 260px;
+}
 .checkin-list {
   display: flex;
   flex-wrap: wrap;

@@ -1511,6 +1511,28 @@ describe("raid feed", () => {
     expect(typeof res.body.posts[0].liveRaiderCount).toBe("number");
   });
 
+  it("marks posts a member already scored a raid reply on", async () => {
+    const app = createApp({
+      community: { findUnique: vi.fn().mockResolvedValue({ id: "demo-community", ticker: "PEPE" }) },
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "u1", wallet: "0xdemo" }) },
+      feedPost: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: "p1", missionId: "m1", authorHandle: "whale", kind: "KOL_POST", postedAt: new Date(), url: "https://x.com/whale/status/1" }
+        ])
+      },
+      kolWatch: { findMany: vi.fn().mockResolvedValue([]) },
+      feedShill: { findMany: vi.fn().mockResolvedValue([]) },
+      submission: {
+        findMany: vi.fn().mockResolvedValue([
+          { task: { missionId: "m1", details: "play:reply-narrative\ntarget:https://x.com/whale/status/1" } }
+        ])
+      }
+    } as never);
+    const res = await request(app).get("/communities/demo-community/feed?wallet=0xdemo");
+    expect(res.status).toBe(200);
+    expect(res.body.posts[0].youProved).toBe(true);
+  });
+
   it("returns the pinned talk track as shill copy", async () => {
     const app = createApp({
       community: { findUnique: vi.fn().mockResolvedValue({ id: "demo-community", ticker: "PEPE", contractAddress: "0xabc" }) },
@@ -1795,5 +1817,130 @@ describe("raid feed", () => {
     const denied = await request(app).post("/communities/demo-community/feed/focus/clear").send({ wallet: "0xdemo" });
     expect(denied.status).toBe(403);
     expect(update).not.toHaveBeenCalled();
+  });
+
+  it("scores a raid-reply proof from the feed after a shill", async () => {
+    const createSubmission = vi.fn().mockResolvedValue({ id: "sub-1", pointsAwarded: 18 });
+    const app = createApp({
+      community: { findUnique: vi.fn().mockResolvedValue({ id: "demo-community", ticker: "PEPE" }) },
+      feedPost: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "p1",
+          communityId: "demo-community",
+          url: "https://x.com/whale/status/99",
+          kind: "KOL_POST",
+          missionId: "m1",
+          authorHandle: "whale",
+          text: "gm"
+        })
+      },
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "u1", wallet: "0xdemo" }) },
+      communityMember: {
+        findUnique: vi.fn().mockResolvedValue({ id: "mem1", userId: "u1", communityId: "demo-community" }),
+        updateMany: vi.fn()
+      },
+      feedShill: { count: vi.fn().mockResolvedValue(1) },
+      mission: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "m1",
+          communityId: "demo-community",
+          priority: Priority.HIGH,
+          status: "ACTIVE",
+          createdAt: new Date(),
+          tasks: [{
+            id: "task-reply",
+            title: "Reply the narrative",
+            actionType: ActionType.REPLY,
+            createdAt: new Date(),
+            details: "play:reply-narrative\ntarget:https://x.com/whale/status/99",
+            submissions: []
+          }]
+        })
+      },
+      missionClaim: { upsert: vi.fn() },
+      submission: { create: createSubmission },
+      score: { create: vi.fn(), groupBy: vi.fn().mockResolvedValue([]) },
+      engagementEvent: { create: vi.fn() },
+      leaderboardSnapshot: { create: vi.fn() }
+    } as never);
+    const res = await request(app).post("/communities/demo-community/feed/p1/proof").send({
+      wallet: "0xdemo",
+      proofUrl: "https://x.com/me/status/100"
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.pointsAwarded).toBe(18);
+    expect(createSubmission).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects the KOL tweet as feed proof, requires a shill first, and refuses a duplicate", async () => {
+    const createSubmission = vi.fn().mockResolvedValue({ id: "sub-1", pointsAwarded: 18 });
+    const feedShillCount = vi.fn()
+      .mockResolvedValueOnce(0)
+      .mockResolvedValue(1);
+    const app = createApp({
+      community: { findUnique: vi.fn().mockResolvedValue({ id: "demo-community", ticker: "PEPE" }) },
+      feedPost: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "p1",
+          communityId: "demo-community",
+          url: "https://x.com/whale/status/99",
+          kind: "KOL_POST",
+          missionId: "m1",
+          authorHandle: "whale",
+          text: "gm"
+        })
+      },
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "u1", wallet: "0xdemo" }) },
+      communityMember: {
+        findUnique: vi.fn().mockResolvedValue({ id: "mem1", userId: "u1", communityId: "demo-community" }),
+        updateMany: vi.fn()
+      },
+      feedShill: { count: feedShillCount },
+      mission: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "m1",
+          communityId: "demo-community",
+          priority: Priority.HIGH,
+          status: "ACTIVE",
+          createdAt: new Date(),
+          tasks: [{
+            id: "task-reply",
+            title: "Reply the narrative",
+            actionType: ActionType.REPLY,
+            createdAt: new Date(),
+            details: "play:reply-narrative\ntarget:https://x.com/whale/status/99",
+            submissions: [{ id: "old", taskId: "task-reply" }]
+          }]
+        })
+      },
+      missionClaim: { upsert: vi.fn() },
+      submission: { create: createSubmission },
+      score: { create: vi.fn(), groupBy: vi.fn().mockResolvedValue([]) },
+      engagementEvent: { create: vi.fn() },
+      leaderboardSnapshot: { create: vi.fn() }
+    } as never);
+
+    const beforeShill = await request(app).post("/communities/demo-community/feed/p1/proof").send({
+      wallet: "0xdemo",
+      proofUrl: "https://x.com/me/status/100"
+    });
+    expect(beforeShill.status).toBe(403);
+    expect(beforeShill.body.error).toContain("Shill this tweet first");
+
+    const kolUrl = await request(app).post("/communities/demo-community/feed/p1/proof").send({
+      wallet: "0xdemo",
+      proofUrl: "https://x.com/whale/status/99"
+    });
+    expect(kolUrl.status).toBe(400);
+    expect(kolUrl.body.error).toContain("KOL post");
+
+    const dup = await request(app).post("/communities/demo-community/feed/p1/proof").send({
+      wallet: "0xdemo",
+      proofUrl: "https://x.com/me/status/100"
+    });
+    expect(dup.status).toBe(409);
+    expect(dup.body.alreadyProved).toBe(true);
+    expect(createSubmission).not.toHaveBeenCalled();
   });
 });

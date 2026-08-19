@@ -30,7 +30,7 @@ import {
 import { ingestNormalizedPost, kolProfileData, parseWatchHandle, refreshAllCommunityFeeds, refreshCommunityFeed } from "./feed";
 import { liveListenerCount, postsCreatedSince, publishLiveFocus, publishLiveRaid, snapshotKol, subscribeLiveFeed } from "./livefeed";
 import { attachShillState, serializeShillHistory } from "./shill";
-import { buildShillCopy, buildShillKit, liveRaiderIds, proofIsReplyToRaidTarget } from "./shillkit";
+import { buildShillCopy, buildShillKit, isRaidReplyPlay, liveRaiderIds, pickRaidReplyTask, proofIsReplyToRaidTarget } from "./shillkit";
 import { isFocusLive, serializeFocus, focusChangeAllowed, shillAllowedDuringFocus } from "./focus";
 import { applyFeedFilters, applyKolFilters, attachKolStats, configuredFeedProvider, fetchUserProfile, mentionMatches, parseXHandle, parseXStatusUrl, postHeat } from "./xfeed";
 
@@ -105,6 +105,12 @@ const claimSchema = z.object({
 const shillPostSchema = z.object({
   wallet: z.string().min(3).optional(),
   reshill: z.boolean().optional()
+});
+
+const feedProofSchema = z.object({
+  wallet: z.string().min(3).optional(),
+  proofUrl: z.string().url(),
+  proofText: z.string().optional()
 });
 
 const pinSchema = z.object({
@@ -737,6 +743,62 @@ async function touchMemberActivity(prisma: PrismaClient, userId: string, communi
   });
 }
 
+async function recordVerifiedSubmission(
+  prisma: PrismaClient,
+  input: {
+    task: { id: string; title: string; actionType: ActionType; createdAt: Date; mission: { communityId: string; priority: Priority } };
+    userId: string;
+    proofUrl: string;
+    proofText?: string;
+    engagementValue: number;
+  }
+) {
+  const isEarly = Date.now() - input.task.createdAt.getTime() < 10 * 60 * 1000;
+  const duplicatePenalty = Boolean(input.proofText && input.proofText.toLowerCase().includes("copy"));
+  const points = scoreSubmission({
+    actionType: input.task.actionType,
+    priority: input.task.mission.priority,
+    isEarly,
+    duplicatePenalty,
+    engagementValue: input.engagementValue
+  });
+  const submission = await prisma.submission.create({
+    data: {
+      taskId: input.task.id,
+      userId: input.userId,
+      proofUrl: input.proofUrl,
+      proofText: input.proofText,
+      isVerified: true,
+      verifiedAt: new Date(),
+      pointsAwarded: points
+    }
+  });
+  await prisma.score.create({
+    data: {
+      userId: input.userId,
+      communityId: input.task.mission.communityId,
+      points,
+      reason: `Submission for ${input.task.title}`,
+      sourceId: submission.id
+    }
+  });
+  await prisma.engagementEvent.create({
+    data: { submissionId: submission.id, type: "SUBMISSION", value: input.engagementValue }
+  });
+  const rows = await prisma.score.groupBy({
+    by: ["userId"],
+    where: { communityId: input.task.mission.communityId },
+    _sum: { points: true },
+    orderBy: { _sum: { points: "desc" } },
+    take: 50
+  });
+  await prisma.leaderboardSnapshot.create({
+    data: { communityId: input.task.mission.communityId, payload: rows as Prisma.InputJsonValue }
+  });
+  await touchMemberActivity(prisma, input.userId, input.task.mission.communityId);
+  return submission;
+}
+
 async function loadTalkTrack(prisma: PrismaClient, communityId: string, missionId?: string | null) {
   if (missionId) {
     const mission = await prisma.mission?.findUnique?.({ where: { id: missionId }, select: { pinText: true } });
@@ -753,14 +815,14 @@ async function loadTalkTrack(prisma: PrismaClient, communityId: string, missionI
 async function loadFocusPayload(
   prisma: PrismaClient,
   community: { id: string; focusPostId?: string | null; focusAt?: Date | string | null; focusById?: string | null },
-  posts: Array<{ id: string; url: string; authorHandle: string; text?: string | null; kind?: string | null }>
+  posts: Array<{ id: string; url: string; authorHandle: string; text?: string | null; kind?: string | null; missionId?: string | null }>
 ) {
   if (!isFocusLive(community)) return null;
   let post = posts.find((item) => item.id === community.focusPostId) ?? null;
   if (!post && community.focusPostId) {
     post = await prisma.feedPost?.findUnique?.({
       where: { id: community.focusPostId },
-      select: { id: true, url: true, authorHandle: true, text: true, kind: true }
+      select: { id: true, url: true, authorHandle: true, text: true, kind: true, missionId: true }
     }) ?? null;
   }
   const by = community.focusById
@@ -1257,6 +1319,20 @@ export function createApp(prisma: PrismaClient) {
       kol: snapshotKol(post.kolWatch ?? rawKols.find((kol) => kol.handle === post.authorHandle))
     }));
     const posts = attachShillState(mapped, shills, viewer?.id);
+    const missionIds = [...new Set(
+      posts
+        .map((post) => (post as { missionId?: string | null }).missionId)
+        .filter((id): id is string => Boolean(id))
+    )];
+    const proofRows = viewer?.id && missionIds.length
+      ? await prisma.submission?.findMany?.({
+          where: { userId: viewer.id, task: { missionId: { in: missionIds } } },
+          include: { task: { select: { missionId: true, details: true } } }
+        }) ?? []
+      : [];
+    const provedMissions = new Set(
+      proofRows.filter((row) => isRaidReplyPlay(row.task?.details)).map((row) => row.task.missionId)
+    );
     const kols = applyKolFilters(attachKolStats(rawKols, rawPosts), filters)
       .sort((a, b) => (b.followers ?? -1) - (a.followers ?? -1));
     const shillHistory = serializeShillHistory(shills.slice(0, 30), viewer?.id).map((item, index) => ({
@@ -1273,6 +1349,15 @@ export function createApp(prisma: PrismaClient) {
     }));
     const talkTrack = pinned?.pinText ?? null;
     const focus = await loadFocusPayload(prisma, community, rawPosts);
+    const decorated = posts.map((post) => {
+      const missionId = (post as { missionId?: string | null }).missionId;
+      return {
+        ...post,
+        focused: focus?.postId === post.id,
+        youProved: Boolean(missionId && provedMissions.has(missionId))
+      };
+    });
+    const focusPost = decorated.find((post) => post.id === focus?.postId);
     res.json({
       provider: configuredFeedProvider(),
       ticker: community.ticker,
@@ -1283,7 +1368,13 @@ export function createApp(prisma: PrismaClient) {
         contractAddress: community.contractAddress,
         pinText: talkTrack
       }),
-      focus,
+      focus: focus
+        ? {
+          ...focus,
+          youShilled: Boolean(focusPost?.youShilled),
+          youProved: Boolean(focusPost?.youProved)
+        }
+        : null,
       you: {
         isLead: Boolean(viewer && !seat.vacant && sameWallet(seat.wallet, viewer.wallet)),
         canSteerFocus: Boolean(viewer && (seat.vacant || sameWallet(seat.wallet, viewer.wallet)))
@@ -1292,7 +1383,7 @@ export function createApp(prisma: PrismaClient) {
       serverTime: new Date().toISOString(),
       live: true,
       kols,
-      posts: posts.map((post) => ({ ...post, focused: focus?.postId === post.id })),
+      posts: decorated,
       shillHistory
     });
   }));
@@ -1615,6 +1706,67 @@ export function createApp(prisma: PrismaClient) {
     publishLiveFocus({ type: "focus", communityId: community.id, focus: null });
     if (user) await touchMemberActivity(prisma, user.id, community.id);
     res.json({ focus: null, cleared: true });
+  }));
+
+  app.post("/communities/:id/feed/:postId/proof", asyncRoute(async (req, res) => {
+    const { wallet: bodyWallet, proofUrl, proofText } = feedProofSchema.parse(req.body ?? {});
+    const wallet = resolveActorWallet(req, bodyWallet);
+    if (!wallet) return res.status(401).json({ error: "Connect a wallet and sign in first" });
+    const post = await prisma.feedPost.findUnique({ where: { id: req.params.postId } });
+    if (!post || post.communityId !== req.params.id) return res.status(404).json({ error: "Post not found" });
+    const community = await prisma.community.findUnique({ where: { id: req.params.id } });
+    if (!community) return res.status(404).json({ error: "Community not found" });
+    let user = await prisma.user.findUnique({ where: { wallet } });
+    if (!user) user = await prisma.user.create({ data: { wallet } });
+    const member = await prisma.communityMember.findUnique({
+      where: { userId_communityId: { userId: user.id, communityId: community.id } }
+    });
+    if (!member) return res.status(403).json({ error: "Join this mint before submitting proof" });
+    const shilled = await prisma.feedShill?.count?.({ where: { feedPostId: post.id, userId: user.id } }) ?? 0;
+    if (shilled < 1) return res.status(403).json({ error: "Shill this tweet first, then paste YOUR reply URL." });
+    const raidProof = proofIsReplyToRaidTarget(proofUrl, `play:reply-narrative\ntarget:${post.url}`);
+    if (!raidProof.ok) return res.status(400).json({ error: raidProof.error });
+    let missionId = post.missionId;
+    if (!missionId) {
+      const mission = await spawnRaidFromFeedPost(
+        prisma,
+        community,
+        post,
+        post.kind === FeedPostKind.MENTION ? SignalType.MENTION_SPIKE : SignalType.KOL_POST
+      );
+      missionId = mission.id;
+      await prisma.feedPost.update({ where: { id: post.id }, data: { missionId } });
+    }
+    const mission = await prisma.mission.findUnique({
+      where: { id: missionId },
+      include: { tasks: { include: { submissions: { where: { userId: user.id }, select: { id: true, taskId: true } } } } }
+    });
+    if (!mission) return res.status(404).json({ error: "Mission not found" });
+    if (mission.status === MissionStatus.ACTIVE && isMissionStale(mission)) {
+      await prisma.mission.update({ where: { id: mission.id }, data: { status: MissionStatus.EXPIRED } });
+    }
+    const closed = missionClosedReason(mission);
+    if (closed) return res.status(409).json({ error: closed });
+    await prisma.missionClaim.upsert({
+      where: { missionId_userId: { missionId: mission.id, userId: user.id } },
+      update: {},
+      create: { missionId: mission.id, userId: user.id }
+    });
+    const submitted = mission.tasks.filter((task) => (task.submissions?.length ?? 0) > 0).map((task) => task.id);
+    const task = pickRaidReplyTask(mission.tasks, post.url, submitted);
+    if (!task) {
+      const already = pickRaidReplyTask(mission.tasks, post.url);
+      if (already) return res.status(409).json({ error: "You already scored a reply on this raid.", alreadyProved: true });
+      return res.status(404).json({ error: "This raid has no reply task to score." });
+    }
+    const submission = await recordVerifiedSubmission(prisma, {
+      task: { ...task, mission },
+      userId: user.id,
+      proofUrl,
+      proofText,
+      engagementValue: 25
+    });
+    res.json({ ok: true, pointsAwarded: submission.pointsAwarded, missionId: mission.id, taskId: task.id, submission });
   }));
 
   app.post("/signals/ingest", asyncRoute(async (req, res) => {
@@ -1964,34 +2116,13 @@ export function createApp(prisma: PrismaClient) {
     }
     const raidProof = proofIsReplyToRaidTarget(proofUrl, task.details);
     if (!raidProof.ok) return res.status(400).json({ error: raidProof.error });
-    const isEarly = Date.now() - task.createdAt.getTime() < 10 * 60 * 1000;
-    const duplicatePenalty = Boolean(proofText && proofText.length > 0 && proofText.toLowerCase().includes("copy"));
-    const points = scoreSubmission({ actionType: task.actionType, priority: task.mission.priority, isEarly, duplicatePenalty, engagementValue });
-
-    const submission = await prisma.submission.create({
-      data: { taskId: task.id, userId: user.id, proofUrl, proofText, isVerified: true, verifiedAt: new Date(), pointsAwarded: points }
+    const submission = await recordVerifiedSubmission(prisma, {
+      task,
+      userId: user.id,
+      proofUrl,
+      proofText,
+      engagementValue
     });
-
-    await prisma.score.create({
-      data: { userId: user.id, communityId: task.mission.communityId, points, reason: `Submission for ${task.title}`, sourceId: submission.id }
-    });
-
-    await prisma.engagementEvent.create({
-      data: { submissionId: submission.id, type: "SUBMISSION", value: engagementValue }
-    });
-
-    const rows = await prisma.score.groupBy({
-      by: ["userId"],
-      where: { communityId: task.mission.communityId },
-      _sum: { points: true },
-      orderBy: { _sum: { points: "desc" } },
-      take: 50
-    });
-    await prisma.leaderboardSnapshot.create({
-      data: { communityId: task.mission.communityId, payload: rows as Prisma.InputJsonValue }
-    });
-    await touchMemberActivity(prisma, user.id, task.mission.communityId);
-
     res.json(submission);
   }));
 

@@ -73,10 +73,31 @@ export function liveRaiderIds(
   return ids;
 }
 
-export function taskNeedsRaidReplyProof(details?: string | null): boolean {
+export function isRaidReplyPlay(details?: string | null): boolean {
   const playId = playIdFromDetails(details);
-  if (!playId || !RAID_REPLY_PLAYS.has(playId)) return false;
+  return Boolean(playId && RAID_REPLY_PLAYS.has(playId));
+}
+
+export function taskNeedsRaidReplyProof(details?: string | null): boolean {
+  if (!isRaidReplyPlay(details)) return false;
   return Boolean(parseXStatusUrl(targetUrlFromDetails(details) || ""));
+}
+
+export function pickRaidReplyTask<T extends { id: string; details?: string | null }>(
+  tasks: T[],
+  targetUrl: string,
+  submittedTaskIds: Iterable<string> = []
+): T | null {
+  const done = new Set(submittedTaskIds);
+  const open = tasks.filter((task) => !done.has(task.id));
+  const target = parseXStatusUrl(targetUrl);
+  const raidTasks = open.filter((task) => isRaidReplyPlay(task.details));
+  if (target) {
+    const matched = raidTasks.find((task) => parseXStatusUrl(targetUrlFromDetails(task.details) || "")?.id === target.id);
+    if (matched) return matched;
+    return raidTasks.find((task) => playIdFromDetails(task.details) === "reply-narrative" && !targetUrlFromDetails(task.details)) ?? null;
+  }
+  return raidTasks.find((task) => playIdFromDetails(task.details) === "reply-narrative") ?? raidTasks[0] ?? null;
 }
 
 export function proofIsReplyToRaidTarget(proofUrl: string, details?: string | null): { ok: true } | { ok: false; error: string } {

@@ -15,8 +15,9 @@
 - POST `/communities/:id/x-community` `{ url, wallet? }` — active CTO lead binds an `x.com/i/communities/{id}` URL to this mint (unique). Shown on the token hub. Does not replace DexScreener contract identity.
 
 ## Raid feed
-- GET `/communities/:id/feed` — watched KOL handles plus latest KOL posts and ticker/CA mentions. Query: `handle` (one KOL), `q` (search handle/name), `kind=KOL_POST|MENTION`, `minFollowers`, `minEngagement` (likes+replies+reposts+quotes), `sort=new|hot`, `since` (ISO time; only posts ingested after that), `wallet` (marks posts this member already shilled). Each post includes `youShilled`, `youShillCount`, `raiderCount`, `shillCount`. `shillHistory` is the coin’s recent shill log.
+- GET `/communities/:id/feed` — watched KOL handles plus latest KOL posts and ticker/CA mentions. Query: `handle` (one KOL), `q` (search handle/name), `kind=KOL_POST|MENTION`, `minFollowers`, `minEngagement` (likes+replies+reposts+quotes), `sort=new|hot`, `since` (ISO time; only posts ingested after that), `wallet` (marks posts this member already shilled). Each post includes `youShilled`, `youShillCount`, `youProved`, `raiderCount`, `shillCount`. `focus` includes `youShilled` / `youProved` for the locked tweet. `shillHistory` is the coin’s recent shill log.
 - POST `/communities/:id/feed/:postId/shill` `{ wallet?, reshill? }` — first shill claims the raid and opens the X URL. If the member already shilled, returns `{ alreadyShilled: true }` without opening a duplicate; pass `reshill: true` to record another hit on the same post.
+- POST `/communities/:id/feed/:postId/proof` `{ wallet?, proofUrl, proofText? }` — after a shill, paste YOUR reply/quote status URL on the raid itself. Rejects the KOL tweet URL. 403 if you have not shilled that post; 409 `{ alreadyProved: true }` if you already scored a raid-reply on it.
 - GET `/communities/:id/feed/live` — Server-Sent Events. `hello` on connect, `post` when a watched KOL (or mention) is ingested. Payload has the post plus KOL avatar/followers/name so the app can popup without reload.
 - POST `/communities/:id/kols` `{ handle, wallet? }` — CTO lead watches an X handle
 - DELETE `/communities/:id/kols/:handle` — CTO lead removes a watch
@@ -36,7 +37,7 @@
 - POST `/missions/:id/complete` — requires a connected wallet; 409 if expired/completed
 
 ## Submissions / Scoring
-- POST `/tasks/:id/submissions` `{ wallet?, proofUrl, proofText?, engagementValue? }` — Bearer token wallet wins over body; requires a mission claim first. The bonus “Post in the linked X Community” task requires a proof URL from that Community; reply/KOL tasks still accept any x.com status URL.
+- POST `/tasks/:id/submissions` `{ wallet?, proofUrl, proofText?, engagementValue? }` — Bearer token wallet wins over body; requires a mission claim first. The bonus “Post in the linked X Community” task requires a proof URL from that Community; reply/KOL tasks still accept any x.com status URL except the raid-target tweet itself. Feed-native raid proof lives on `POST /communities/:id/feed/:postId/proof`.
 - POST `/submissions/:id/verify`
 - GET `/communities/:id/leaderboard`
 

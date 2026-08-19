@@ -4,6 +4,7 @@ import { authHeaders, getStoredWallet, notifyOps } from "./session";
 export const SHILL_EVENT = "shillops-shill";
 export const RAID_EVENT = "shillops-raid";
 export const FOCUS_EVENT = "shillops-focus";
+export const PROOF_EVENT = "shillops-proof";
 
 export type ShillKit = {
   copy: string;
@@ -23,6 +24,9 @@ export type FocusRaid = {
   at: string;
   until: string;
   by: { wallet: string; displayName: string | null } | null;
+  missionId?: string | null;
+  youShilled?: boolean;
+  youProved?: boolean;
 };
 
 export type ShillResult = {
@@ -71,15 +75,20 @@ export async function runShill(input: { communityId: string; postId: string; res
     if (body.focus) dispatchFocus(input.communityId, body.focus);
     return { ok: false, error: body.error || "Could not claim this post.", focus: body.focus ?? null, missionId: body.missionId ?? null };
   }
-  if (body.focus) dispatchFocus(input.communityId, body.focus);
+  const focus = body.focus
+    ? { ...body.focus, youShilled: body.focus.postId === input.postId ? true : body.focus.youShilled }
+    : null;
+  if (focus) dispatchFocus(input.communityId, focus);
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(SHILL_EVENT, {
+      detail: { postId: input.postId, reshill: Boolean(input.reshill), kit: body.kit, missionId: body.missionId, alreadyShilled: Boolean(body.alreadyShilled) }
+    }));
+  }
   if (body.alreadyShilled && !input.reshill) {
-    return { ok: true, alreadyShilled: true, kit: body.kit, url: body.url, youShillCount: body.youShillCount, focus: body.focus ?? null, missionId: body.missionId ?? null };
+    return { ok: true, alreadyShilled: true, kit: body.kit, url: body.url, youShillCount: body.youShillCount, focus, missionId: body.missionId ?? null };
   }
   await applyShillKit(body.kit, body.url);
   notifyOps();
-  if (typeof window !== "undefined") {
-    window.dispatchEvent(new CustomEvent(SHILL_EVENT, { detail: { postId: input.postId, reshill: Boolean(input.reshill), kit: body.kit, missionId: body.missionId } }));
-  }
   return {
     ok: true,
     alreadyShilled: Boolean(body.alreadyShilled),
@@ -88,7 +97,7 @@ export async function runShill(input: { communityId: string; postId: string; res
     url: body.url,
     liveRaiderCount: body.liveRaiderCount,
     youShillCount: body.youShillCount,
-    focus: body.focus ?? null,
+    focus,
     missionId: body.missionId ?? null
   };
 }
@@ -120,4 +129,50 @@ export async function clearFocus(communityId: string): Promise<{ ok: boolean; er
   if (!res.ok) return { ok: false, error: body.error || "Could not clear the focus raid." };
   dispatchFocus(communityId, null);
   return { ok: true };
+}
+
+export type ProofResult = {
+  ok: boolean;
+  error?: string;
+  alreadyProved?: boolean;
+  pointsAwarded?: number;
+  missionId?: string | null;
+};
+
+export function dispatchProof(communityId: string, postId: string, pointsAwarded?: number) {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(PROOF_EVENT, { detail: { communityId, postId, pointsAwarded } }));
+}
+
+export async function runProof(input: {
+  communityId: string;
+  postId: string;
+  proofUrl: string;
+  proofText?: string;
+}): Promise<ProofResult> {
+  const wallet = getStoredWallet();
+  if (!wallet) return { ok: false, error: "Connect a wallet to score this reply." };
+  const res = await fetch(`${API_BASE}/communities/${input.communityId}/feed/${input.postId}/proof`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify({ wallet, proofUrl: input.proofUrl, proofText: input.proofText })
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    if (body.alreadyProved) dispatchProof(input.communityId, input.postId, body.pointsAwarded);
+    return {
+      ok: false,
+      error: body.error || "Could not score this reply.",
+      alreadyProved: Boolean(body.alreadyProved),
+      missionId: body.missionId ?? null
+    };
+  }
+  notifyOps();
+  dispatchProof(input.communityId, input.postId, body.pointsAwarded);
+  return {
+    ok: true,
+    alreadyProved: Boolean(body.alreadyProved),
+    pointsAwarded: body.pointsAwarded,
+    missionId: body.missionId ?? null
+  };
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildShillCopy, buildShillKit, liveRaiderIds, proofIsReplyToRaidTarget, xReplyIntentUrl } from "./shillkit";
+import { buildShillCopy, buildShillKit, liveRaiderIds, pickRaidReplyTask, proofIsReplyToRaidTarget, xReplyIntentUrl } from "./shillkit";
 
 describe("shill kit", () => {
   it("builds talk track copy with ticker and CA", () => {
@@ -35,5 +35,20 @@ describe("shill kit", () => {
     expect(proofIsReplyToRaidTarget("https://x.com/whale/status/99", details).ok).toBe(false);
     expect(proofIsReplyToRaidTarget("https://x.com/me/status/100", details)).toEqual({ ok: true });
     expect(proofIsReplyToRaidTarget("https://x.com/me/status/1", "play:share-telegram").ok).toBe(true);
+  });
+
+  it("picks the raid-reply task that matches the KOL tweet", () => {
+    const tasks = [
+      { id: "tg", details: "play:share-telegram" },
+      { id: "reply", details: "play:reply-narrative\ntarget:https://x.com/whale/status/99" },
+      { id: "quote", details: "play:quote-signal\ntarget:https://x.com/other/status/1" }
+    ];
+    expect(pickRaidReplyTask(tasks, "https://x.com/whale/status/99")?.id).toBe("reply");
+    expect(pickRaidReplyTask(tasks, "https://x.com/whale/status/99", ["reply"])).toBeNull();
+    expect(pickRaidReplyTask(
+      [{ id: "open", details: "play:reply-narrative" }, ...tasks],
+      "https://x.com/whale/status/99",
+      ["reply"]
+    )?.id).toBe("open");
   });
 });
