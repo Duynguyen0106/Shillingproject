@@ -31,7 +31,7 @@ import { ingestNormalizedPost, kolProfileData, parseWatchHandle, refreshAllCommu
 import { liveListenerCount, postsCreatedSince, publishLiveFocus, publishLiveRaid, snapshotKol, subscribeLiveFeed } from "./livefeed";
 import { attachShillState, serializeShillHistory } from "./shill";
 import { buildShillCopy, buildShillKit, liveRaiderIds, proofIsReplyToRaidTarget } from "./shillkit";
-import { isFocusLive, serializeFocus } from "./focus";
+import { isFocusLive, serializeFocus, focusChangeAllowed } from "./focus";
 import { applyFeedFilters, applyKolFilters, attachKolStats, configuredFeedProvider, fetchUserProfile, mentionMatches, parseXHandle, parseXStatusUrl, postHeat } from "./xfeed";
 
 const appUrl = process.env.APP_URL || "http://localhost:3000";
@@ -798,6 +798,11 @@ async function setFocusRaid(
   return focus;
 }
 
+async function actorIsActiveLead(prisma: PrismaClient, communityId: string, wallet: string) {
+  const seat = await loadLeadSeat(prisma, communityId);
+  return !seat.vacant && sameWallet(seat.wallet, wallet);
+}
+
 async function promoteLead(prisma: PrismaClient, communityId: string, userId: string) {
   await prisma.communityMember.updateMany({
     where: { communityId, role: "lead" },
@@ -1208,7 +1213,7 @@ export function createApp(prisma: PrismaClient) {
     });
     const since = filters.since ? new Date(filters.since) : null;
     const viewerWallet = resolveActorWallet(req, typeof req.query.wallet === "string" ? req.query.wallet : undefined);
-    const [rawPosts, rawKols, shills, viewer, pinned] = await Promise.all([
+    const [rawPosts, rawKols, shills, viewer, pinned, seat] = await Promise.all([
       prisma.feedPost?.findMany?.({
         where: { communityId: community.id },
         orderBy: { postedAt: "desc" },
@@ -1233,7 +1238,8 @@ export function createApp(prisma: PrismaClient) {
         where: { communityId: community.id, pinText: { not: null } },
         orderBy: { pinnedAt: "desc" },
         select: { pinText: true }
-      }) ?? null
+      }) ?? null,
+      loadLeadSeat(prisma, community.id)
     ]);
     const fresh = postsCreatedSince(rawPosts, since && !Number.isNaN(since.getTime()) ? since : null);
     const mapped = applyFeedFilters(fresh, filters).slice(0, 50).map((post) => ({
@@ -1269,6 +1275,9 @@ export function createApp(prisma: PrismaClient) {
         pinText: talkTrack
       }),
       focus,
+      you: {
+        isLead: Boolean(viewer && !seat.vacant && sameWallet(seat.wallet, viewer.wallet))
+      },
       filters,
       serverTime: new Date().toISOString(),
       live: true,
@@ -1533,7 +1542,20 @@ export function createApp(prisma: PrismaClient) {
       where: { userId_communityId: { userId: user.id, communityId: community.id } }
     });
     if (!member) return res.status(403).json({ error: "Join this mint before calling a focus raid" });
-    const focus = await setFocusRaid(prisma, community.id, post, user);
+    const live = isFocusLive(community);
+    const isLead = await actorIsActiveLead(prisma, community.id, wallet);
+    const allowed = focusChangeAllowed({
+      action: "set",
+      isLead,
+      live,
+      currentPostId: community.focusPostId,
+      nextPostId: post.id
+    });
+    if (!allowed.ok) return res.status(403).json({ error: allowed.error, focus: await loadFocusPayload(prisma, community, [post]) });
+    const samePost = live && community.focusPostId === post.id;
+    const focus = samePost && !isLead
+      ? await loadFocusPayload(prisma, community, [post])
+      : await setFocusRaid(prisma, community.id, post, user);
     await touchMemberActivity(prisma, user.id, community.id);
     res.json({ focus, url: post.url });
   }));
@@ -1551,6 +1573,14 @@ export function createApp(prisma: PrismaClient) {
       })
       : null;
     if (!member) return res.status(403).json({ error: "Join this mint before clearing the focus raid" });
+    const isLead = await actorIsActiveLead(prisma, community.id, wallet);
+    const allowed = focusChangeAllowed({
+      action: "clear",
+      isLead,
+      live: isFocusLive(community),
+      currentPostId: community.focusPostId
+    });
+    if (!allowed.ok) return res.status(403).json({ error: allowed.error, focus: await loadFocusPayload(prisma, community, []) });
     await prisma.community?.update?.({
       where: { id: community.id },
       data: { focusPostId: null, focusAt: null, focusById: null }

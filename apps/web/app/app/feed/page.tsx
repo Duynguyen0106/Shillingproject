@@ -74,6 +74,7 @@ type FeedResponse = {
   talkTrack?: string | null;
   shillCopy?: string;
   focus?: FocusRaid | null;
+  you?: { isLead?: boolean };
   kols: KolWatch[];
   posts: FeedPost[];
   shillHistory?: ShillHistoryItem[];
@@ -334,7 +335,7 @@ export default function RaidFeedPage() {
       <div className="kicker">Do not hunt on X</div>
       <h1>Raid Feed</h1>
       <p className="muted">
-        New KOL posts pop in live. Call a focus raid so the whole room replies under one tweet. Shill copies the talk track and opens that reply. Already-shilled posts stay marked — reshill if you want another hit.
+        New KOL posts pop in live. First shill (or Everyone here) locks the room onto one tweet. Only the CTO lead can move or clear that focus. Shill copies the talk track and opens that reply.
       </p>
       {feed && (
         <div className="row">
@@ -360,7 +361,7 @@ export default function RaidFeedPage() {
           <div className="kicker">Focus raid — everyone here</div>
           <h3>Reply to @{feed.focus.authorHandle}</h3>
           <p>{feed.focus.text}</p>
-          <p className="muted">Same tweet, many replies. That is the pile-on. Other cards are dimmed until this focus ends.</p>
+          <p className="muted">Same tweet, many replies. That is the pile-on. Other cards are dimmed until this focus ends. Only the CTO lead can move or clear it.</p>
           <div className="row">
             <button className="btn" disabled={busy} onClick={() => void runShill({
               communityId: getStoredCommunityId(),
@@ -373,7 +374,9 @@ export default function RaidFeedPage() {
               Shill this tweet
             </button>
             <a className="btn secondary" href={feed.focus.url} target="_blank" rel="noreferrer">Open on X</a>
-            <button className="btn secondary" disabled={busy} onClick={() => void stopFocus()}>Clear focus</button>
+            {feed.you?.isLead && (
+              <button className="btn secondary" disabled={busy} onClick={() => void stopFocus()}>Clear focus</button>
+            )}
           </div>
         </div>
       )}
@@ -559,12 +562,12 @@ export default function RaidFeedPage() {
                 {focused ? "Shill this tweet" : "Shill this"}
               </button>
             )}
-            {connected && !focused && (
+            {connected && !focused && (!feed.focus || feed.you?.isLead) && (
               <button className="btn secondary" disabled={busy} onClick={() => void focusRaid(post)}>
                 Everyone here
               </button>
             )}
-            {connected && focused && (
+            {connected && focused && feed.you?.isLead && (
               <button className="btn secondary" disabled={busy} onClick={() => void stopFocus()}>
                 Clear focus
               </button>

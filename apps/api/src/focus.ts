@@ -37,6 +37,26 @@ export function isFocusLive(
   return focusUntil(input.focusAt, windowMs).getTime() >= now;
 }
 
+export function focusChangeAllowed(input: {
+  action: "set" | "clear";
+  isLead: boolean;
+  live: boolean;
+  currentPostId?: string | null;
+  nextPostId?: string | null;
+}): { ok: true } | { ok: false; error: string } {
+  if (input.action === "clear") {
+    if (!input.live) return { ok: true };
+    if (!input.isLead) return { ok: false, error: "Only the CTO lead can clear the focus raid." };
+    return { ok: true };
+  }
+  if (!input.live) return { ok: true };
+  if (input.nextPostId && input.currentPostId === input.nextPostId) return { ok: true };
+  if (!input.isLead) {
+    return { ok: false, error: "Only the CTO lead can move the focus raid. Keep shilling the current tweet." };
+  }
+  return { ok: true };
+}
+
 export function serializeFocus(input: {
   focusPostId?: string | null;
   focusAt?: Date | string | null;

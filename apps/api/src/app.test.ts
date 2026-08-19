@@ -1605,6 +1605,7 @@ describe("raid feed", () => {
       user: { findUnique: vi.fn().mockResolvedValue({ id: "u1", wallet: "0xdemo", displayName: "Raider" }) },
       communityMember: {
         findUnique: vi.fn().mockResolvedValue({ id: "mem1", userId: "u1", communityId: "demo-community" }),
+        findFirst: vi.fn().mockResolvedValue(null),
         updateMany: vi.fn()
       }
     } as never);
@@ -1676,5 +1677,95 @@ describe("raid feed", () => {
     expect(res.status).toBe(200);
     expect(update).not.toHaveBeenCalled();
     expect(res.body.focus.postId).toBe("p1");
+  });
+
+  it("refuses a member who tries to move a live focus raid", async () => {
+    const update = vi.fn();
+    const app = createApp({
+      community: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "demo-community",
+          ticker: "PEPE",
+          focusPostId: "p1",
+          focusAt: new Date(),
+          focusById: "u2"
+        }),
+        update
+      },
+      feedPost: { findUnique: vi.fn().mockResolvedValue({ id: "p2", communityId: "demo-community", url: "https://x.com/other/status/2", authorHandle: "other", text: "nope", kind: "KOL_POST" }) },
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "u1", wallet: "0xdemo" }) },
+      communityMember: {
+        findUnique: vi.fn().mockResolvedValue({ id: "mem1", userId: "u1", communityId: "demo-community", role: "member" }),
+        findFirst: vi.fn().mockResolvedValue({
+          role: "lead",
+          lastActiveAt: new Date(),
+          user: { wallet: "0xlead", displayName: "Lead" }
+        }),
+        updateMany: vi.fn()
+      }
+    } as never);
+    const res = await request(app).post("/communities/demo-community/feed/p2/focus").send({ wallet: "0xdemo" });
+    expect(res.status).toBe(403);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("lets the CTO lead move a live focus raid", async () => {
+    const update = vi.fn();
+    const app = createApp({
+      community: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "demo-community",
+          ticker: "PEPE",
+          focusPostId: "p1",
+          focusAt: new Date(),
+          focusById: "u2"
+        }),
+        update
+      },
+      feedPost: { findUnique: vi.fn().mockResolvedValue({ id: "p2", communityId: "demo-community", url: "https://x.com/whale/status/2", authorHandle: "whale", text: "now", kind: "KOL_POST" }) },
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "u-lead", wallet: "0xlead", displayName: "Lead" }) },
+      communityMember: {
+        findUnique: vi.fn().mockResolvedValue({ id: "lead1", userId: "u-lead", communityId: "demo-community", role: "lead" }),
+        findFirst: vi.fn().mockResolvedValue({
+          role: "lead",
+          lastActiveAt: new Date(),
+          user: { wallet: "0xlead", displayName: "Lead" }
+        }),
+        updateMany: vi.fn()
+      }
+    } as never);
+    const res = await request(app).post("/communities/demo-community/feed/p2/focus").send({ wallet: "0xlead" });
+    expect(res.status).toBe(200);
+    expect(res.body.focus.postId).toBe("p2");
+    expect(update).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets only the CTO lead clear a live focus raid", async () => {
+    const update = vi.fn();
+    const app = createApp({
+      community: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "demo-community",
+          ticker: "PEPE",
+          focusPostId: "p1",
+          focusAt: new Date(),
+          focusById: "u1"
+        }),
+        update
+      },
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "u1", wallet: "0xdemo" }) },
+      communityMember: {
+        findUnique: vi.fn().mockResolvedValue({ id: "mem1", userId: "u1", communityId: "demo-community", role: "member" }),
+        findFirst: vi.fn().mockResolvedValue({
+          role: "lead",
+          lastActiveAt: new Date(),
+          user: { wallet: "0xlead", displayName: "Lead" }
+        }),
+        updateMany: vi.fn()
+      }
+    } as never);
+    const denied = await request(app).post("/communities/demo-community/feed/focus/clear").send({ wallet: "0xdemo" });
+    expect(denied.status).toBe(403);
+    expect(update).not.toHaveBeenCalled();
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { FOCUS_RAID_MS, isFocusLive, serializeFocus } from "./focus";
+import { FOCUS_RAID_MS, focusChangeAllowed, isFocusLive, serializeFocus } from "./focus";
 
 describe("focus raid", () => {
   it("is live only while the window is open", () => {
@@ -17,6 +17,33 @@ describe("focus raid", () => {
       focusAt: "2026-08-18T23:00:00.000Z"
     }, now)).toBe(false);
     expect(isFocusLive({ focusPostId: null, focusAt: "2026-08-19T01:00:00.000Z" }, now)).toBe(false);
+  });
+
+  it("lets any member set the first focus but only the lead can move or clear it", () => {
+    expect(focusChangeAllowed({ action: "set", isLead: false, live: false, nextPostId: "p1" }).ok).toBe(true);
+    expect(focusChangeAllowed({
+      action: "set",
+      isLead: false,
+      live: true,
+      currentPostId: "p1",
+      nextPostId: "p1"
+    }).ok).toBe(true);
+    expect(focusChangeAllowed({
+      action: "set",
+      isLead: false,
+      live: true,
+      currentPostId: "p1",
+      nextPostId: "p2"
+    }).ok).toBe(false);
+    expect(focusChangeAllowed({
+      action: "set",
+      isLead: true,
+      live: true,
+      currentPostId: "p1",
+      nextPostId: "p2"
+    }).ok).toBe(true);
+    expect(focusChangeAllowed({ action: "clear", isLead: false, live: true }).ok).toBe(false);
+    expect(focusChangeAllowed({ action: "clear", isLead: true, live: true }).ok).toBe(true);
   });
 
   it("serializes the post everyone should reply to", () => {
