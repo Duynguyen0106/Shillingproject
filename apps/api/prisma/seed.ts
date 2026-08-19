@@ -1,213 +1,146 @@
-import { PrismaClient, ActionType, Platform, Priority, SignalType } from "@prisma/client";
+/**
+ * Prisma seed — creates demo data for local dev & fresh deployments.
+ * Run: npx ts-node prisma/seed.ts   OR   npx prisma db seed
+ */
+import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
-const appUrl = process.env.APP_URL || "http://localhost:3000";
 
 async function main() {
+  console.log("🌱 Seeding database…");
+
+  // ── Demo community ───────────────────────────────────────────────
   const community = await prisma.community.upsert({
     where: { id: "demo-community" },
-    update: {
-      contractAddress: "0x6982508145454ce325ddbe47a25d4ec3d2311933",
-      chainId: "ethereum",
-      dexUrl: "https://dexscreener.com/ethereum/0x6982508145454ce325ddbe47a25d4ec3d2311933"
-    },
     create: {
       id: "demo-community",
-      name: "Pepe Raiders",
-      ticker: "PEPE",
-      description: "Demo memecoin community bound to the PEPE contract on Ethereum",
-      contractAddress: "0x6982508145454ce325ddbe47a25d4ec3d2311933",
-      chainId: "ethereum",
-      dexUrl: "https://dexscreener.com/ethereum/0x6982508145454ce325ddbe47a25d4ec3d2311933"
-    }
-  });
-
-  const user = await prisma.user.upsert({
-    where: { wallet: "0xdemo" },
-    update: { displayName: "Raider" },
-    create: { wallet: "0xdemo", displayName: "Raider" }
-  });
-
-  await prisma.communityMember.upsert({
-    where: { userId_communityId: { userId: user.id, communityId: community.id } },
+      name: "ShillOps Demo",
+      ticker: "DEMO",
+      description: "The official ShillOps demo community. Join to test all features.",
+      chainId: "base",
+      contractAddress: "0x0000000000000000000000000000000000000000",
+      dexUrl: "https://dexscreener.com",
+    },
     update: {},
-    create: { userId: user.id, communityId: community.id, role: "lead" }
   });
+  console.log(`  ✓ Community: ${community.name}`);
 
-  const signal = await prisma.signal.upsert({
-    where: { dedupeKey: `${community.id}:${SignalType.MENTION_SPIKE}:demo` },
-    update: {},
-    create: {
-      communityId: community.id,
-      type: SignalType.MENTION_SPIKE,
-      severity: 72,
-      sourceRef: "demo",
-      dedupeKey: `${community.id}:${SignalType.MENTION_SPIKE}:demo`,
-      metadata: { ticker: "PEPE", spikePct: 28 }
-    }
-  });
-
-  const mission = await prisma.mission.upsert({
-    where: { signalId: signal.id },
-    update: {},
-    create: {
-      communityId: community.id,
-      signalId: signal.id,
-      title: "Mention spike response mission",
-      description: "Boost narrative quickly across X + Telegram.",
-      priority: Priority.HIGH,
-      urgency: 72,
-      tasks: {
-        create: [
-          {
-            title: "Reply to target thread",
-            details: "play:reply-narrative",
-            actionType: ActionType.REPLY,
-            platform: Platform.X,
-            basePoints: 10
-          },
-          {
-            title: "Share in Telegram",
-            details: "play:share-telegram",
-            actionType: ActionType.SHARE,
-            platform: Platform.TELEGRAM,
-            basePoints: 6
-          }
-        ]
-      }
-    }
-  });
-
-  await prisma.missionClaim.upsert({
-    where: { missionId_userId: { missionId: mission.id, userId: user.id } },
-    update: {},
-    create: { missionId: mission.id, userId: user.id }
-  });
-
-  const communityLink = await prisma.shortLink.findFirst({ where: { missionId: mission.id, userId: null } });
-  if (!communityLink) {
-    await prisma.shortLink.create({
-      data: {
-        communityId: community.id,
-        missionId: mission.id,
-        code: "democta1",
-        targetUrl: `${appUrl}/app/missions/${mission.id}`
-      }
+  // ── Demo KOL watches ────────────────────────────────────────────
+  const kols = [
+    { handle: "elonmusk", displayName: "Elon Musk" },
+    { handle: "cz_binance", displayName: "CZ" },
+    { handle: "VitalikButerin", displayName: "Vitalik Buterin" },
+  ];
+  for (const k of kols) {
+    await prisma.kolWatch.upsert({
+      where: { communityId_handle: { communityId: community.id, handle: k.handle.toLowerCase() } },
+      create: { communityId: community.id, handle: k.handle.toLowerCase(), displayName: k.displayName },
+      update: {},
     });
   }
+  console.log(`  ✓ KOL watches: ${kols.length}`);
 
-  const raiderLink = await prisma.shortLink.findFirst({ where: { missionId: mission.id, userId: user.id } });
-  if (!raiderLink) {
-    await prisma.shortLink.create({
-      data: {
-        communityId: community.id,
-        missionId: mission.id,
-        userId: user.id,
-        code: "raidcta1",
-        targetUrl: `${appUrl}/app/missions/${mission.id}`
-      }
-    });
-  }
-
-  await prisma.kolWatch.upsert({
-    where: { communityId_handle: { communityId: community.id, handle: "examplekol" } },
-    update: {
-      displayName: "Example KOL",
-      followers: 128000,
-      following: 412,
-      statusesCount: 4100,
-      verified: true,
-      bio: "Demo watch so the raid feed is not empty."
+  // ── Demo missions ────────────────────────────────────────────────
+  const missions = [
+    {
+      title: "Reply to KOL alpha post",
+      description: "Reply to a high-profile CT post mentioning $DEMO and our community link.",
+      priority: "HIGH" as const,
+      urgency: 80,
+      tasks: [
+        { title: "Reply with $DEMO mention", actionType: "REPLY" as const, platform: "X" as const, pointValue: 50 },
+        { title: "Quote-tweet with community context", actionType: "SHARE" as const, platform: "X" as const, pointValue: 30 },
+      ],
     },
-    create: {
-      communityId: community.id,
-      handle: "examplekol",
-      displayName: "Example KOL",
-      followers: 128000,
-      following: 412,
-      statusesCount: 4100,
-      verified: true,
-      bio: "Demo watch so the raid feed is not empty."
-    }
-  });
-
-  await prisma.feedPost.upsert({
-    where: { communityId_url: { communityId: community.id, url: "https://x.com/examplekol/status/1" } },
-    update: {
-      text: "$PEPE looking heavy. Quote this.",
-      authorFollowers: 128000,
-      likeCount: 840,
-      replyCount: 62,
-      retweetCount: 110,
-      quoteCount: 21,
-      viewCount: 22000
+    {
+      title: "Shill the DEX listing",
+      description: "Share the DEX listing across CT to drive volume and awareness.",
+      priority: "MEDIUM" as const,
+      urgency: 50,
+      tasks: [
+        { title: "Post DexScreener link with commentary", actionType: "SHARE" as const, platform: "X" as const, pointValue: 30 },
+        { title: "Drop chart in Discord/Telegram", actionType: "SHARE" as const, platform: "TELEGRAM" as const, pointValue: 20 },
+      ],
     },
-    create: {
-      communityId: community.id,
-      kind: "KOL_POST",
-      url: "https://x.com/examplekol/status/1",
-      authorHandle: "examplekol",
-      authorName: "Example KOL",
-      authorFollowers: 128000,
-      likeCount: 840,
-      replyCount: 62,
-      retweetCount: 110,
-      quoteCount: 21,
-      viewCount: 22000,
-      text: "$PEPE looking heavy. Quote this.",
-      postedAt: new Date()
-    }
-  });
-
-  await prisma.feedPost.upsert({
-    where: { communityId_url: { communityId: community.id, url: "https://x.com/random/status/2" } },
-    update: {
-      text: `CA ${community.contractAddress}`,
-      authorFollowers: 2400,
-      likeCount: 18,
-      replyCount: 7,
-      retweetCount: 3
+    {
+      title: "Invite new holders",
+      description: "Bring 3 new wallets into the community. Use your referral link.",
+      priority: "LOW" as const,
+      urgency: 20,
+      tasks: [
+        { title: "Share referral link", actionType: "INVITE" as const, platform: "X" as const, pointValue: 20 },
+      ],
     },
-    create: {
-      communityId: community.id,
-      kind: "MENTION",
-      url: "https://x.com/random/status/2",
-      authorHandle: "random",
-      authorFollowers: 2400,
-      likeCount: 18,
-      replyCount: 7,
-      retweetCount: 3,
-      text: `Someone dropped the ${community.ticker} CA ${community.contractAddress}`,
-      postedAt: new Date(),
-      missionId: mission.id
-    }
-  });
+  ];
 
-  const mentionPost = await prisma.feedPost.findUnique({
-    where: { communityId_url: { communityId: community.id, url: "https://x.com/random/status/2" } }
-  });
-  if (mentionPost) {
-    const already = await prisma.feedShill.findFirst({
-      where: { feedPostId: mentionPost.id, userId: user.id }
-    });
-    if (!already) {
-      await prisma.feedShill.create({
+  for (const m of missions) {
+    const existing = await prisma.mission.findFirst({ where: { communityId: community.id, title: m.title } });
+    if (!existing) {
+      await prisma.mission.create({
         data: {
           communityId: community.id,
-          feedPostId: mentionPost.id,
-          userId: user.id,
-          missionId: mission.id
-        }
+          title: m.title,
+          description: m.description,
+          priority: m.priority,
+          urgency: m.urgency,
+          status: "ACTIVE",
+          tasks: { create: m.tasks },
+        },
       });
     }
   }
+  console.log(`  ✓ Missions: ${missions.length}`);
+
+  // ── Achievements ────────────────────────────────────────────────
+  const achievements = [
+    { slug: "first-shill",     title: "First Blood",       description: "Complete your first shill",           icon: "🩸" },
+    { slug: "first-proof",     title: "Proof of Work",     description: "Submit your first verified proof",     icon: "✅" },
+    { slug: "streak-7",        title: "Week Warrior",      description: "Maintain a 7-day activity streak",    icon: "🔥" },
+    { slug: "streak-30",       title: "Monthly Grinder",   description: "Maintain a 30-day streak",            icon: "💎" },
+    { slug: "100-shills",      title: "Centurion",         description: "Submit 100 shills",                   icon: "💯" },
+    { slug: "top-raider",      title: "Top Raider",        description: "Reach rank #1 on the leaderboard",    icon: "🥇" },
+    { slug: "whale-tier",      title: "Whale",             description: "Reach whale holder tier",             icon: "🐋" },
+    { slug: "first-referral",  title: "Recruiter",         description: "Refer your first raider",             icon: "🔗" },
+    { slug: "season-winner",   title: "Season Champion",   description: "Finish #1 in a season",               icon: "🏆" },
+    { slug: "alliance-raid",   title: "Alliance Forged",   description: "Participate in an alliance raid",     icon: "⚔️" },
+  ];
+
+  for (const a of achievements) {
+    await prisma.achievement.upsert({
+      where: { slug: a.slug },
+      create: a,
+      update: { title: a.title, description: a.description, icon: a.icon },
+    });
+  }
+  console.log(`  ✓ Achievements: ${achievements.length}`);
+
+  // ── Demo announcement ────────────────────────────────────────────
+  const annoCount = await prisma.announcement.count({ where: { communityId: community.id } });
+  if (annoCount === 0) {
+    await prisma.announcement.create({
+      data: {
+        communityId: community.id,
+        text: "🚀 Welcome to ShillOps Demo! Connect your wallet, verify your X, and start raiding. Earn points → redeem tokens.",
+        pinned: true,
+      },
+    });
+    console.log("  ✓ Demo announcement created");
+  }
+
+  // ── Demo season ──────────────────────────────────────────────────
+  const now = new Date();
+  const seasonEnd = new Date(now.getTime() + 14 * 24 * 3600_000);
+  const existingSeason = await (prisma as any).season.findFirst({ where: { communityId: community.id } });
+  if (!existingSeason) {
+    await (prisma as any).season.create({
+      data: { communityId: community.id, label: "Season 1 — Demo", startsAt: now, endsAt: seasonEnd, status: "active" },
+    });
+    console.log("  ✓ Demo season created");
+  }
+
+  console.log("✅ Seed complete.");
 }
 
 main()
-  .then(async () => prisma.$disconnect())
-  .catch(async (e) => {
-    // eslint-disable-next-line no-console
-    console.error(e);
-    await prisma.$disconnect();
-    process.exit(1);
-  });
+  .catch((e) => { console.error(e); process.exit(1); })
+  .finally(() => prisma.$disconnect());

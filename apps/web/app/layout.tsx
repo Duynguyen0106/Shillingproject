@@ -4,6 +4,7 @@ import LiveFeedToasts from "./LiveFeedToasts";
 import NavFeedLink from "./NavFeedLink";
 import PWAInit from "./PWAInit";
 import PushOptIn from "./PushOptIn";
+import MobileNav from "./MobileNav";
 import "./globals.css";
 import Link from "next/link";
 import type { ReactNode } from "react";
@@ -12,7 +13,6 @@ export const metadata = {
   title: "ShillOps",
   description: "Coordinate memecoin raids. Earn points. Redeem your coin.",
   manifest: "/manifest.json",
-  themeColor: "#6c47ff",
   appleWebApp: { capable: true, title: "ShillOps", statusBarStyle: "black-translucent" }
 };
 
@@ -27,27 +27,36 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
       </head>
       <body>
-        <nav className="nav">
+        {/* Desktop nav — hidden on mobile */}
+        <nav className="nav desktop-only">
           <Link href="/" className="brand">Shill Ops</Link>
           <NavFeedLink />
           <Link href="/app">Missions</Link>
           <Link href="/app/me">My Ops</Link>
+          <Link href="/app/discover">Discover</Link>
           <Link href="/app/leaderboard">Communities</Link>
-          <Link href="/app/proof-gallery">Gallery</Link>
-          <Link href="/app/alliances">Alliances</Link>
-          <Link href="/app/daily-quest">Daily Quest</Link>
+          <Link href="/app/daily-quest">Quest</Link>
           <Link href="/app/seasons">Seasons</Link>
-          <Link href="/app/admin/signals">Signals</Link>
-          <Link href="/app/admin/attribution">Attribution</Link>
-          <Link href="/app/admin/notifications">Alerts</Link>
+          <Link href="/app/notifications">🔔</Link>
           <Link href="/app/admin/dashboard">Admin</Link>
           <ConnectWalletButton />
         </nav>
+
+        {/* Mobile nav — hamburger + bottom tabs */}
+        <div className="mobile-only">
+          <MobileNav />
+        </div>
+
+        <div className="mobile-only mobile-body-offset" />
+
         <CommunityBanner />
         <PushOptIn />
         {children}
         <LiveFeedToasts />
         <PWAInit />
+
+        {/* Bottom nav spacer on mobile */}
+        <div className="mobile-only bottom-nav-spacer" />
       </body>
     </html>
   );

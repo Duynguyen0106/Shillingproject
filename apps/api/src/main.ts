@@ -2,6 +2,7 @@ import "dotenv/config";
 import { PrismaClient } from "@prisma/client";
 import { createApp, tickFeeds } from "./app";
 import { configuredFeedProvider } from "./xfeed";
+import { startCron } from "./cron";
 
 const port = Number(process.env.PORT || 4000);
 const prisma = new PrismaClient();
@@ -11,6 +12,8 @@ app.listen(port, () => {
   // eslint-disable-next-line no-console
   console.log(`API listening on http://localhost:${port}`);
 });
+
+startCron(prisma);
 
 if (configuredFeedProvider() !== "none") {
   const ms = Number(process.env.FEED_POLL_MS || 60_000);
