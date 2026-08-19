@@ -56,6 +56,8 @@ a.btn,
   margin-bottom: 12px;
 }
 .card.next-play {
+  border-color: #f97316;
+}
 .row {
   display: flex;
   gap: 12px;
