@@ -1,6 +1,8 @@
 import { createHash } from "crypto";
 import express, { NextFunction, Request, Response } from "express";
 import cors from "cors";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 import { nanoid } from "nanoid";
 import { Prisma, PrismaClient, ActionType, FeedPostKind, MissionStatus, Priority, SignalType } from "@prisma/client";
 import { computeScore, scoreAttributedClick } from "@shillops/scoring-engine";
@@ -89,7 +91,7 @@ const submissionSchema = z.object({
   wallet: z.string().min(3).optional(),
   proofUrl: z.string().url(),
   proofText: z.string().optional(),
-  engagementValue: z.number().int().min(0).default(0)
+  engagementValue: z.number().int().min(0).max(100).default(0)
 });
 
 const createLinkSchema = z.object({
@@ -703,8 +705,8 @@ function walletFromAuth(req: Request): string | undefined {
   return sessions.get(auth)?.wallet;
 }
 
-function resolveActorWallet(req: Request, bodyWallet?: string): string | undefined {
-  return walletFromAuth(req) || bodyWallet;
+function resolveActorWallet(req: Request): string | undefined {
+  return walletFromAuth(req);
 }
 
 function serializeShortLinks<T extends { code: string; targetUrl: string; missionId?: string | null; _count?: { clicks: number } }>(links: T[]) {
@@ -1161,14 +1163,63 @@ async function scheduleReplyAutoScore(
   await updateJob("FAILED", { failReason: "Reply not found within time window" });
 }
 
+function isAdminWallet(wallet: string): boolean {
+  const allowed = process.env.ADMIN_WALLETS?.split(",").map((w) => w.trim().toLowerCase()).filter(Boolean) ?? [];
+  if (allowed.length === 0) return false; // fail closed — deny when not configured
+  return allowed.includes(wallet.toLowerCase());
+}
+
+function requireAdmin(req: Request, res: Response): string | null {
+  const wallet = walletFromAuth(req);
+  if (!wallet) { res.status(401).json({ error: "Unauthorized" }); return null; }
+  if (!isAdminWallet(wallet)) { res.status(403).json({ error: "Not admin" }); return null; }
+  return wallet;
+}
+
+/** Test-only helper: injects a pre-built session token so tests can authenticate without SIWE. */
+export function injectTestSession(token: string, wallet: string): void {
+  sessions.set(token, { wallet });
+}
+
 export function createApp(prisma: PrismaClient) {
   const app = express();
-  app.use(cors());
-  app.use(express.json());
+  app.set("trust proxy", 1);
+
+  // Security headers
+  app.use(helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"], // Next.js needs this for RSC
+        connectSrc: ["'self'", "https:"],
+        imgSrc: ["'self'", "data:", "https:"],
+        frameSrc: ["'self'", "https://dexscreener.com"]
+      }
+    }
+  }));
+
+  // Restrict CORS to the known frontend origin
+  const allowedOrigin = process.env.APP_URL || "http://localhost:3000";
+  app.use(cors({
+    origin: (origin, cb) => {
+      if (!origin || origin === allowedOrigin || allowedOrigin === "*") return cb(null, true);
+      cb(new Error("CORS: origin not allowed"));
+    },
+    credentials: true
+  }));
+
+  app.use(express.json({ limit: "64kb" }));
+
+  // Auth rate limiter — strict
+  const authLimiter = rateLimit({ windowMs: 15 * 60_000, max: 20, standardHeaders: true, legacyHeaders: false });
+  // General write limiter
+  const writeLimiter = rateLimit({ windowMs: 60_000, max: 60, standardHeaders: true, legacyHeaders: false });
+  // Admin limiter
+  const adminLimiter = rateLimit({ windowMs: 60_000, max: 30, standardHeaders: true, legacyHeaders: false });
 
   app.get("/health", (_req, res) => res.json({ ok: true }));
 
-  app.post("/auth/siwe/start", asyncRoute(async (req, res) => {
+  app.post("/auth/siwe/start", authLimiter, asyncRoute(async (req, res) => {
     const { wallet } = siweStartSchema.parse(req.body);
     if (!isAddress(wallet)) return res.status(400).json({ error: "Invalid wallet address" });
     const address = getAddress(wallet);
@@ -1178,11 +1229,13 @@ export function createApp(prisma: PrismaClient) {
     res.json({ nonce, message, address });
   }));
 
-  app.post("/auth/siwe/verify", asyncRoute(async (req, res) => {
+  app.post("/auth/siwe/verify", authLimiter, asyncRoute(async (req, res) => {
     const { message, signature, displayName } = siweVerifySchema.parse(req.body);
     const nonce = parseSiweNonce(message);
     const address = parseSiweAddress(message);
     const issued = nonce ? siweNonces.get(nonce) : undefined;
+    // Always delete nonce (single-use regardless of outcome — MED-1 fix)
+    if (nonce) siweNonces.delete(nonce);
     if (!nonce || !address || !issued || issued.expiresAt < Date.now() || issued.address !== address) {
       return res.status(401).json({ error: "Invalid or expired SIWE nonce" });
     }
@@ -1192,26 +1245,18 @@ export function createApp(prisma: PrismaClient) {
       signature: signature as Hex
     });
     if (!valid) return res.status(401).json({ error: "Invalid signature" });
-    siweNonces.delete(nonce);
 
     let user = await prisma.user.findUnique({ where: { wallet: address } });
     if (!user) user = await prisma.user.create({ data: { wallet: address, displayName } });
     const token = nanoid(24);
     sessions.set(token, { wallet: address });
-    res.json({ token, user });
+    // Return only safe user fields (no tokens)
+    res.json({ token, user: { id: user.id, wallet: user.wallet, displayName: user.displayName, xHandle: user.xHandle, xVerified: user.xVerified } });
   }));
 
   app.get("/me", asyncRoute(async (req, res) => {
-    const header = req.get("authorization");
-    let wallet = "";
-    if (header) {
-      const token = header.replace(/^Bearer\s+/i, "").trim();
-      wallet = sessions.get(token)?.wallet ?? "";
-      if (!wallet) return res.status(401).json({ error: "Unauthorized" });
-    } else {
-      wallet = String(req.query.wallet || "");
-      if (!wallet) return res.status(401).json({ error: "Unauthorized" });
-    }
+    const wallet = walletFromAuth(req);
+    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
     const user = await prisma.user.findUnique({ where: { wallet } });
     if (!user) return res.status(404).json({ error: "User not found" });
     const communityId = String(req.query.communityId || process.env.DEMO_COMMUNITY_ID || "demo-community");
@@ -1277,7 +1322,12 @@ export function createApp(prisma: PrismaClient) {
       clicks: link._count.clicks
     }));
     res.json({
-      ...user,
+      id: user.id,
+      wallet: user.wallet,
+      displayName: user.displayName,
+      xHandle: user.xHandle,
+      xVerified: user.xVerified,
+      xVerifyToken: user.xVerifyToken, // needed for verify flow UI
       communityId,
       points: scoreAgg._sum.points ?? 0,
       rank: rankIndex >= 0 ? rankIndex + 1 : null,
@@ -1344,8 +1394,7 @@ export function createApp(prisma: PrismaClient) {
     if (!user.xVerifyToken) return res.status(400).json({ error: "No verify token found" });
     const provider = configuredFeedProvider();
     if (provider === "none") {
-      await prisma.user.update({ where: { id: user.id }, data: { xVerified: true, xVerifyToken: null } });
-      return res.json({ verified: true, handle: user.xHandle, note: "X API not configured — trusted without tweet check" });
+      return res.status(503).json({ error: "X API not configured — cannot verify handle. Set TWITTERAPI_IO_KEY or TWITTER_BEARER_TOKEN." });
     }
     const { fetchHandleTweets } = await import("./xfeed");
     const recentTweets = await fetchHandleTweets(user.xHandle).catch(() => [] as import("./xfeed").NormalizedPost[]);
@@ -1364,7 +1413,9 @@ export function createApp(prisma: PrismaClient) {
     res.json({ ok: true });
   }));
 
-  app.post("/communities", asyncRoute(async (req, res) => {
+  app.post("/communities", writeLimiter, asyncRoute(async (req, res) => {
+    const wallet = walletFromAuth(req);
+    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
     const data = createCommunitySchema.parse(req.body);
     const community = await prisma.community.create({
       data: {
@@ -1401,7 +1452,7 @@ export function createApp(prisma: PrismaClient) {
     if (!token && !community) return res.status(404).json({ error: "Token not found on DexScreener" });
     const orders = token ? await fetchDexOrders(token.chainId, token.address) : [];
     const proof = tokenProofFromOrders(orders);
-    const actorWallet = resolveActorWallet(req, parsed.wallet);
+    const actorWallet = resolveActorWallet(req);
     const lead = community ? await loadLeadSeat(prisma, community.id) : null;
     const you = community ? await loadMembership(prisma, community.id, actorWallet) : null;
     const viewer = actorWallet ? await prisma.user?.findUnique?.({ where: { wallet: actorWallet } }) : null;
@@ -1421,7 +1472,7 @@ export function createApp(prisma: PrismaClient) {
 
   app.post("/communities/from-token", asyncRoute(async (req, res) => {
     const body = fromTokenSchema.parse(req.body ?? {});
-    const wallet = resolveActorWallet(req, body.wallet);
+    const wallet = resolveActorWallet(req);
     if (!wallet) return res.status(401).json({ error: "Connect a wallet and sign in first" });
     const query = body.q || (body.chainId && body.contractAddress ? `${body.chainId}:${body.contractAddress}` : body.contractAddress);
     if (!query) return res.status(400).json({ error: "Provide q or contractAddress" });
@@ -1475,7 +1526,7 @@ export function createApp(prisma: PrismaClient) {
   app.get("/communities/:id", asyncRoute(async (req, res) => {
     const community = await prisma.community.findUnique({ where: { id: req.params.id } });
     if (!community) return res.status(404).json({ error: "Community not found" });
-    const wallet = resolveActorWallet(req, typeof req.query.wallet === "string" ? req.query.wallet : undefined);
+    const wallet = resolveActorWallet(req);
     const viewer = wallet ? await prisma.user?.findUnique?.({ where: { wallet } }) : null;
     res.json({
       ...community,
@@ -1484,8 +1535,10 @@ export function createApp(prisma: PrismaClient) {
     });
   }));
 
-  app.post("/communities/:id/join", asyncRoute(async (req, res) => {
-    const { wallet, displayName } = joinCommunitySchema.parse(req.body);
+  app.post("/communities/:id/join", writeLimiter, asyncRoute(async (req, res) => {
+    const wallet = walletFromAuth(req);
+    if (!wallet) return res.status(401).json({ error: "Sign in first" });
+    const { displayName } = joinCommunitySchema.parse(req.body);
     let user = await prisma.user.findUnique({ where: { wallet } });
     if (!user) user = await prisma.user.create({ data: { wallet, displayName } });
     const member = await prisma.communityMember.upsert({
@@ -1496,9 +1549,9 @@ export function createApp(prisma: PrismaClient) {
     res.json({ ...member, lead: await loadLeadSeat(prisma, req.params.id) });
   }));
 
-  app.post("/communities/:id/lead/resign", asyncRoute(async (req, res) => {
-    const { wallet: bodyWallet } = claimSchema.parse(req.body ?? {});
-    const wallet = resolveActorWallet(req, bodyWallet);
+  app.post("/communities/:id/lead/resign", writeLimiter, asyncRoute(async (req, res) => {
+    const {} = claimSchema.parse(req.body ?? {});
+    const wallet = resolveActorWallet(req);
     if (!wallet) return res.status(401).json({ error: "Connect a wallet and sign in first" });
     const user = await prisma.user.findUnique({ where: { wallet } });
     if (!user) return res.status(404).json({ error: "User not found" });
@@ -1516,9 +1569,9 @@ export function createApp(prisma: PrismaClient) {
     res.json({ resigned: true, lead, you: { role: "member", isLead: false } });
   }));
 
-  app.post("/communities/:id/lead/claim", asyncRoute(async (req, res) => {
-    const { wallet: bodyWallet } = claimSchema.parse(req.body ?? {});
-    const wallet = resolveActorWallet(req, bodyWallet);
+  app.post("/communities/:id/lead/claim", writeLimiter, asyncRoute(async (req, res) => {
+    const {} = claimSchema.parse(req.body ?? {});
+    const wallet = resolveActorWallet(req);
     if (!wallet) return res.status(401).json({ error: "Connect a wallet and sign in first" });
     const community = await prisma.community.findUnique({ where: { id: req.params.id } });
     if (!community) return res.status(404).json({ error: "Community not found" });
@@ -1537,8 +1590,8 @@ export function createApp(prisma: PrismaClient) {
   }));
 
   app.post("/communities/:id/x-community", asyncRoute(async (req, res) => {
-    const { wallet: bodyWallet, url } = xCommunitySchema.parse(req.body ?? {});
-    const wallet = resolveActorWallet(req, bodyWallet);
+    const { url } = xCommunitySchema.parse(req.body ?? {});
+    const wallet = resolveActorWallet(req);
     if (!wallet) return res.status(401).json({ error: "Connect a wallet and sign in first" });
     const community = await prisma.community.findUnique({ where: { id: req.params.id } });
     if (!community) return res.status(404).json({ error: "Community not found" });
@@ -1578,7 +1631,7 @@ export function createApp(prisma: PrismaClient) {
       since: typeof req.query.since === "string" && req.query.since ? req.query.since : undefined
     });
     const since = filters.since ? new Date(filters.since) : null;
-    const viewerWallet = resolveActorWallet(req, typeof req.query.wallet === "string" ? req.query.wallet : undefined);
+    const viewerWallet = resolveActorWallet(req);
     const [rawPosts, rawKols, shills, viewer, pinned, seat] = await Promise.all([
       prisma.feedPost?.findMany?.({
         where: { communityId: community.id },
@@ -1689,7 +1742,23 @@ export function createApp(prisma: PrismaClient) {
     });
   }));
 
+  // Track SSE connections per IP to prevent DoS (MED-14)
+  const sseConnections = new Map<string, number>();
+  const SSE_MAX_PER_IP = 5;
+
   app.get("/communities/:id/feed/live", (req, res) => {
+    const clientIp = req.ip || "unknown";
+    const current = sseConnections.get(clientIp) ?? 0;
+    if (current >= SSE_MAX_PER_IP) {
+      res.status(429).json({ error: "Too many live connections from this IP" });
+      return;
+    }
+    sseConnections.set(clientIp, current + 1);
+    req.on("close", () => {
+      const n = (sseConnections.get(clientIp) ?? 1) - 1;
+      if (n <= 0) sseConnections.delete(clientIp);
+      else sseConnections.set(clientIp, n);
+    });
     void (async () => {
       const community = await prisma.community.findUnique({ where: { id: req.params.id } });
       if (!community) {
@@ -1720,8 +1789,8 @@ export function createApp(prisma: PrismaClient) {
   });
 
   app.post("/communities/:id/kols", asyncRoute(async (req, res) => {
-    const { wallet: bodyWallet, handle: rawHandle } = kolWatchSchema.parse(req.body ?? {});
-    const wallet = resolveActorWallet(req, bodyWallet);
+    const { handle: rawHandle } = kolWatchSchema.parse(req.body ?? {});
+    const wallet = resolveActorWallet(req);
     if (!wallet) return res.status(401).json({ error: "Connect a wallet and sign in first" });
     const community = await prisma.community.findUnique({ where: { id: req.params.id } });
     if (!community) return res.status(404).json({ error: "Community not found" });
@@ -1760,7 +1829,7 @@ export function createApp(prisma: PrismaClient) {
   }));
 
   app.post("/communities/:id/feed/refresh", asyncRoute(async (req, res) => {
-    const wallet = resolveActorWallet(req, typeof req.body?.wallet === "string" ? req.body.wallet : undefined);
+    const wallet = resolveActorWallet(req);
     if (!wallet) return res.status(401).json({ error: "Connect a wallet and sign in first" });
     const community = await prisma.community.findUnique({ where: { id: req.params.id } });
     if (!community) return res.status(404).json({ error: "Community not found" });
@@ -1789,10 +1858,16 @@ export function createApp(prisma: PrismaClient) {
     res.json(result);
   }));
 
-  app.post("/communities/:id/feed/posts", asyncRoute(async (req, res) => {
+  app.post("/communities/:id/feed/posts", writeLimiter, asyncRoute(async (req, res) => {
+    const wallet = walletFromAuth(req);
+    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
     const body = feedPostSchema.parse(req.body ?? {});
     const community = await prisma.community.findUnique({ where: { id: req.params.id } });
     if (!community) return res.status(404).json({ error: "Community not found" });
+    // Restrict to community lead or admin
+    const leadSeat = await loadLeadSeat(prisma, req.params.id);
+    const isLead = leadSeat.wallet ? sameWallet(leadSeat.wallet, wallet) : false;
+    if (!isLead && !isAdminWallet(wallet)) return res.status(403).json({ error: "Only community leads can post" });
     const parsed = parseXStatusUrl(body.url);
     if (!parsed) return res.status(400).json({ error: "Use an X status URL like https://x.com/user/status/123" });
     const handle = parseXHandle(body.authorHandle || parsed.handle || "") ?? parsed.handle ?? "unknown";
@@ -1824,8 +1899,8 @@ export function createApp(prisma: PrismaClient) {
   }));
 
   app.post("/communities/:id/feed/:postId/shill", asyncRoute(async (req, res) => {
-    const { wallet: bodyWallet, reshill } = shillPostSchema.parse(req.body ?? {});
-    const wallet = resolveActorWallet(req, bodyWallet);
+    const { reshill } = shillPostSchema.parse(req.body ?? {});
+    const wallet = resolveActorWallet(req);
     if (!wallet) return res.status(401).json({ error: "Connect a wallet and sign in first" });
     // Rate-limit: max 30 shills per 5 minutes per wallet
     if (!checkRateLimit(shillRateLimit, wallet, 30, 5 * 60_000)) {
@@ -1965,8 +2040,8 @@ export function createApp(prisma: PrismaClient) {
   }));
 
   app.post("/communities/:id/feed/:postId/focus", asyncRoute(async (req, res) => {
-    const { wallet: bodyWallet } = claimSchema.parse(req.body ?? {});
-    const wallet = resolveActorWallet(req, bodyWallet);
+    const {} = claimSchema.parse(req.body ?? {});
+    const wallet = resolveActorWallet(req);
     if (!wallet) return res.status(401).json({ error: "Connect a wallet and sign in first" });
     const post = await prisma.feedPost.findUnique({ where: { id: req.params.postId } });
     if (!post || post.communityId !== req.params.id) return res.status(404).json({ error: "Post not found" });
@@ -1998,8 +2073,8 @@ export function createApp(prisma: PrismaClient) {
   }));
 
   app.post("/communities/:id/feed/focus/clear", asyncRoute(async (req, res) => {
-    const { wallet: bodyWallet } = claimSchema.parse(req.body ?? {});
-    const wallet = resolveActorWallet(req, bodyWallet);
+    const {} = claimSchema.parse(req.body ?? {});
+    const wallet = resolveActorWallet(req);
     if (!wallet) return res.status(401).json({ error: "Connect a wallet and sign in first" });
     const community = await prisma.community.findUnique({ where: { id: req.params.id } });
     if (!community) return res.status(404).json({ error: "Community not found" });
@@ -2029,8 +2104,8 @@ export function createApp(prisma: PrismaClient) {
   }));
 
   app.post("/communities/:id/feed/:postId/proof", asyncRoute(async (req, res) => {
-    const { wallet: bodyWallet, proofUrl, proofText } = feedProofSchema.parse(req.body ?? {});
-    const wallet = resolveActorWallet(req, bodyWallet);
+    const { proofUrl, proofText } = feedProofSchema.parse(req.body ?? {});
+    const wallet = resolveActorWallet(req);
     if (!wallet) return res.status(401).json({ error: "Connect a wallet and sign in first" });
     // Rate-limit: max 10 proofs per 5 minutes per wallet
     if (!checkRateLimit(proofRateLimit, wallet, 10, 5 * 60_000)) {
@@ -2132,7 +2207,13 @@ export function createApp(prisma: PrismaClient) {
     });
   }));
 
-  app.post("/signals/ingest", asyncRoute(async (req, res) => {
+  app.post("/signals/ingest", writeLimiter, asyncRoute(async (req, res) => {
+    // Require API key OR admin wallet
+    const apiKey = req.get("x-api-key") ?? req.get("x-signal-key");
+    const ingestSecret = process.env.SIGNAL_INGEST_SECRET;
+    const callerWallet = walletFromAuth(req);
+    const isAuthorized = (ingestSecret && apiKey === ingestSecret) || (callerWallet && isAdminWallet(callerWallet));
+    if (!isAuthorized) return res.status(401).json({ error: "Signal ingest requires X-API-Key or admin auth" });
     const body = ingestSignalSchema.parse(req.body);
     const { type, severity, sourceRef, metadata } = body;
     const bindByMint = Boolean(body.q || body.contractAddress);
@@ -2195,6 +2276,7 @@ export function createApp(prisma: PrismaClient) {
   }));
 
   app.get("/communities/:id/signals", asyncRoute(async (req, res) => {
+    if (!walletFromAuth(req)) return res.status(401).json({ error: "Unauthorized" });
     const signals = await prisma.signal.findMany({ where: { communityId: req.params.id }, orderBy: { createdAt: "desc" } });
     res.json(signals);
   }));
@@ -2222,6 +2304,7 @@ export function createApp(prisma: PrismaClient) {
   }));
 
   app.get("/communities/:id/activity", asyncRoute(async (req, res) => {
+    if (!walletFromAuth(req)) return res.status(401).json({ error: "Unauthorized" });
     const [claims, submissions, clickScores, feedShills] = await Promise.all([
       prisma.missionClaim.findMany({
         where: { mission: { communityId: req.params.id } },
@@ -2296,7 +2379,8 @@ export function createApp(prisma: PrismaClient) {
     res.json(events);
   }));
 
-  app.post("/signals/:id/create-mission", asyncRoute(async (req, res) => {
+  app.post("/signals/:id/create-mission", adminLimiter, asyncRoute(async (req, res) => {
+    if (!requireAdmin(req, res)) return;
     const signal = await prisma.signal.findUnique({ where: { id: req.params.id } });
     if (!signal) return res.status(404).json({ error: "Signal not found" });
     let mission = await prisma.mission.findFirst({
@@ -2339,7 +2423,7 @@ export function createApp(prisma: PrismaClient) {
       await prisma.mission.update({ where: { id: mission.id }, data: { status: MissionStatus.EXPIRED } });
       mission = { ...mission, status: MissionStatus.EXPIRED };
     }
-    const actorWallet = resolveActorWallet(req, typeof req.query.wallet === "string" ? req.query.wallet : undefined);
+    const actorWallet = resolveActorWallet(req);
     res.json({
       ...mission,
       claimsCount: mission.claims.length,
@@ -2357,8 +2441,8 @@ export function createApp(prisma: PrismaClient) {
   }));
 
   app.post("/missions/:id/claim", asyncRoute(async (req, res) => {
-    const { wallet: bodyWallet } = claimSchema.parse(req.body ?? {});
-    const wallet = resolveActorWallet(req, bodyWallet);
+    const {} = claimSchema.parse(req.body ?? {});
+    const wallet = resolveActorWallet(req);
     if (!wallet) return res.status(401).json({ error: "Connect a wallet and sign in first" });
     let user = await prisma.user.findUnique({ where: { wallet } });
     if (!user) user = await prisma.user.create({ data: { wallet } });
@@ -2385,8 +2469,8 @@ export function createApp(prisma: PrismaClient) {
   }));
 
   app.post("/missions/:id/pin", asyncRoute(async (req, res) => {
-    const { wallet: bodyWallet, body } = pinSchema.parse(req.body ?? {});
-    const wallet = resolveActorWallet(req, bodyWallet);
+    const { body } = pinSchema.parse(req.body ?? {});
+    const wallet = resolveActorWallet(req);
     if (!wallet) return res.status(401).json({ error: "Connect a wallet and sign in first" });
     const mission = await prisma.mission.findUnique({ where: { id: req.params.id } });
     if (!mission) return res.status(404).json({ error: "Mission not found" });
@@ -2419,8 +2503,8 @@ export function createApp(prisma: PrismaClient) {
   }));
 
   app.post("/missions/:id/check-in", asyncRoute(async (req, res) => {
-    const { wallet: bodyWallet } = claimSchema.parse(req.body ?? {});
-    const wallet = resolveActorWallet(req, bodyWallet);
+    const {} = claimSchema.parse(req.body ?? {});
+    const wallet = resolveActorWallet(req);
     if (!wallet) return res.status(401).json({ error: "Connect a wallet and sign in first" });
     const mission = await prisma.mission.findUnique({ where: { id: req.params.id } });
     if (!mission) return res.status(404).json({ error: "Mission not found" });
@@ -2445,11 +2529,15 @@ export function createApp(prisma: PrismaClient) {
     res.json({ checkedIn: true, checkInCount });
   }));
 
-  app.post("/missions/:id/complete", asyncRoute(async (req, res) => {
+  app.post("/missions/:id/complete", adminLimiter, asyncRoute(async (req, res) => {
     const wallet = resolveActorWallet(req);
     if (!wallet) return res.status(401).json({ error: "Connect a wallet and sign in first" });
     const mission = await prisma.mission.findUnique({ where: { id: req.params.id } });
     if (!mission) return res.status(404).json({ error: "Mission not found" });
+    // Only community lead or admin can complete a mission
+    const leadSeat = await loadLeadSeat(prisma, mission.communityId);
+    const isLead = leadSeat.wallet ? sameWallet(leadSeat.wallet, wallet) : false;
+    if (!isLead && !isAdminWallet(wallet)) return res.status(403).json({ error: "Only community leads can complete missions" });
     if (mission.status === MissionStatus.ACTIVE && isMissionStale(mission)) {
       await prisma.mission.update({ where: { id: mission.id }, data: { status: MissionStatus.EXPIRED } });
     }
@@ -2460,8 +2548,8 @@ export function createApp(prisma: PrismaClient) {
   }));
 
   app.post("/tasks/:id/submissions", asyncRoute(async (req, res) => {
-    const { wallet: bodyWallet, proofUrl, proofText, engagementValue } = submissionSchema.parse(req.body);
-    const wallet = resolveActorWallet(req, bodyWallet);
+    const { proofUrl, proofText, engagementValue } = submissionSchema.parse(req.body);
+    const wallet = resolveActorWallet(req);
     if (!wallet) return res.status(401).json({ error: "Connect a wallet and sign in first" });
     let user = await prisma.user.findUnique({ where: { wallet } });
     if (!user) user = await prisma.user.create({ data: { wallet } });
@@ -2513,7 +2601,8 @@ export function createApp(prisma: PrismaClient) {
     })));
   }));
 
-  app.post("/submissions/:id/verify", asyncRoute(async (req, res) => {
+  app.post("/submissions/:id/verify", adminLimiter, asyncRoute(async (req, res) => {
+    if (!requireAdmin(req, res)) return;
     const approved = Boolean(req.body?.approved ?? true);
     const submission = await prisma.submission.update({
       where: { id: req.params.id },
@@ -2522,9 +2611,20 @@ export function createApp(prisma: PrismaClient) {
     res.json(submission);
   }));
 
-  app.post("/links", asyncRoute(async (req, res) => {
+  app.post("/links", writeLimiter, asyncRoute(async (req, res) => {
+    const wallet = walletFromAuth(req);
+    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
     const { communityId, missionId, targetUrl } = createLinkSchema.parse(req.body);
-    const link = await prisma.shortLink.create({ data: { communityId, missionId, targetUrl, code: nanoid(8) } });
+    // Validate targetUrl is a safe https URL (open redirect prevention — HIGH-3)
+    try {
+      const parsed = new URL(targetUrl);
+      if (parsed.protocol !== "https:") return res.status(400).json({ error: "targetUrl must be https" });
+    } catch {
+      return res.status(400).json({ error: "Invalid targetUrl" });
+    }
+    const user = await prisma.user.findUnique({ where: { wallet } });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    const link = await prisma.shortLink.create({ data: { communityId, missionId, targetUrl, userId: user.id, code: nanoid(8) } });
     res.json(link);
   }));
 
@@ -2534,8 +2634,15 @@ export function createApp(prisma: PrismaClient) {
       include: { mission: { select: { status: true, priority: true } } }
     });
     if (!link) return res.status(404).send("Not found");
-    const forwarded = req.get("x-forwarded-for")?.split(",")[0]?.trim();
-    const ip = forwarded || req.ip || "unknown";
+    // Validate redirect target is safe (HIGH-3)
+    try {
+      const parsed = new URL(link.targetUrl);
+      if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return res.status(400).send("Invalid redirect target");
+    } catch {
+      return res.status(400).send("Invalid redirect target");
+    }
+    // Use req.ip which respects trust proxy setting (LOW-3)
+    const ip = req.ip || "unknown";
     const userAgent = req.get("user-agent") || "";
     const ipHash = hashClickFingerprint(ip, userAgent);
 
@@ -2578,6 +2685,7 @@ export function createApp(prisma: PrismaClient) {
   }));
 
   app.get("/communities/:id/attribution", asyncRoute(async (req, res) => {
+    if (!walletFromAuth(req)) return res.status(401).json({ error: "Unauthorized" });
     const links = await prisma.shortLink.findMany({
       where: { communityId: req.params.id },
       include: {
@@ -2596,21 +2704,20 @@ export function createApp(prisma: PrismaClient) {
     })));
   }));
 
-  app.post("/notifications/telegram/test", asyncRoute(async (_req, res) => {
+  app.post("/notifications/telegram/test", adminLimiter, asyncRoute(async (req, res) => {
+    if (!requireAdmin(req, res)) return;
     await dispatchAlert("Test Telegram mission alert from Shill Ops MVP");
     res.json({ ok: true });
   }));
 
-  app.post("/notifications/discord/test", asyncRoute(async (_req, res) => {
+  app.post("/notifications/discord/test", adminLimiter, asyncRoute(async (req, res) => {
+    if (!requireAdmin(req, res)) return;
     await dispatchAlert("Test Discord mission alert from Shill Ops MVP");
     res.json({ ok: true });
   }));
 
-  app.get("/notifications", asyncRoute(async (_req, res) => {
-    res.json(notificationLog);
-  }));
-
-  app.get("/notifications", asyncRoute(async (_req, res) => {
+  app.get("/notifications", adminLimiter, asyncRoute(async (req, res) => {
+    if (!requireAdmin(req, res)) return;
     res.json(notificationLog);
   }));
 
@@ -2739,29 +2846,39 @@ export function createApp(prisma: PrismaClient) {
   }));
 
   // ── Redemption ────────────────────────────────────────────────
-  app.post("/me/redeem", asyncRoute(async (req, res) => {
+  app.post("/me/redeem", writeLimiter, asyncRoute(async (req, res) => {
     const wallet = walletFromAuth(req);
     if (!wallet) return res.status(401).json({ error: "Unauthorized" });
-    const user = await prisma.user.findUnique({ where: { wallet } });
-    if (!user) return res.status(404).json({ error: "User not found" });
     const { communityId, points } = z.object({
       communityId: z.string(),
       points: z.number().int().min(100)
     }).parse(req.body);
-    const scoreAgg = await prisma.score.aggregate({
-      where: { userId: user.id, communityId },
-      _sum: { points: true }
+    // Use a transaction to prevent double-spend race condition (MED-10)
+    const redemption = await prisma.$transaction(async (tx) => {
+      const user = await tx.user.findUnique({ where: { wallet } });
+      if (!user) throw Object.assign(new Error("User not found"), { statusCode: 404 });
+      const scoreAgg = await tx.score.aggregate({
+        where: { userId: user.id, communityId },
+        _sum: { points: true }
+      });
+      const redeemed = await tx.redemption.aggregate({
+        where: { userId: user.id, communityId },
+        _sum: { pointsBurned: true }
+      });
+      const available = (scoreAgg._sum.points ?? 0) - (redeemed._sum.pointsBurned ?? 0);
+      if (available < points) throw Object.assign(new Error(`Only ${available} redeemable points available`), { statusCode: 400 });
+      return tx.redemption.create({
+        data: { userId: user.id, communityId, pointsBurned: points, status: "pending" }
+      });
+    }).catch((err: Error & { statusCode?: number }) => {
+      if (err.statusCode) {
+        res.status(err.statusCode).json({ error: err.message });
+        return null;
+      }
+      throw err;
     });
-    const redeemed = await prisma.redemption.aggregate({
-      where: { userId: user.id, communityId },
-      _sum: { pointsBurned: true }
-    });
-    const available = (scoreAgg._sum.points ?? 0) - (redeemed._sum.pointsBurned ?? 0);
-    if (available < points) return res.status(400).json({ error: `Only ${available} redeemable points available` });
-    const redemption = await prisma.redemption.create({
-      data: { userId: user.id, communityId, pointsBurned: points, status: "pending" }
-    });
-    res.json({ ok: true, redemptionId: redemption.id, pointsBurned: points, available: available - points });
+    if (!redemption) return;
+    res.json({ ok: true, redemptionId: redemption.id, pointsBurned: points });
   }));
 
   app.get("/me/redeem", asyncRoute(async (req, res) => {
@@ -2807,14 +2924,8 @@ export function createApp(prisma: PrismaClient) {
   }));
 
   // ── Admin: rate-limit abuse flags ─────────────────────────────
-  app.get("/admin/abuse-flags", asyncRoute(async (req, res) => {
-    const wallet = walletFromAuth(req);
-    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
-    // Simple admin check: env whitelist or first lead across any community
-    const allowed = process.env.ADMIN_WALLETS?.split(",").map((w) => w.trim().toLowerCase()) ?? [];
-    if (allowed.length > 0 && !allowed.includes(wallet.toLowerCase())) {
-      return res.status(403).json({ error: "Not admin" });
-    }
+  app.get("/admin/abuse-flags", adminLimiter, asyncRoute(async (req, res) => {
+    if (!requireAdmin(req, res)) return;
     const since = new Date(Date.now() - 24 * 3600_000);
     const heavyShillers = await prisma.feedShill.groupBy({
       by: ["userId"],
@@ -2839,13 +2950,8 @@ export function createApp(prisma: PrismaClient) {
     });
   }));
 
-  app.get("/admin/stats", asyncRoute(async (req, res) => {
-    const wallet = walletFromAuth(req);
-    if (!wallet) return res.status(401).json({ error: "Unauthorized" });
-    const allowed = process.env.ADMIN_WALLETS?.split(",").map((w) => w.trim().toLowerCase()) ?? [];
-    if (allowed.length > 0 && !allowed.includes(wallet.toLowerCase())) {
-      return res.status(403).json({ error: "Not admin" });
-    }
+  app.get("/admin/stats", adminLimiter, asyncRoute(async (req, res) => {
+    if (!requireAdmin(req, res)) return;
     const since24h = new Date(Date.now() - 24 * 3600_000);
     const [users, communities, shills24h, proofs24h, activeMembers24h] = await Promise.all([
       prisma.user.count(),

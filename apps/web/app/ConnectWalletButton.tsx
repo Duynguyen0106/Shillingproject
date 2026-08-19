@@ -78,8 +78,8 @@ async function siweLogin(address: string, provider: WalletProvider, walletLabel?
   const { token, user } = await verify.json();
   await fetch(`${API_BASE}/communities/${getStoredCommunityId()}/join`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ wallet: user.wallet, displayName: user.displayName })
+    headers: { "content-type": "application/json", "authorization": `Bearer ${token}` },
+    body: JSON.stringify({ displayName: user.displayName })
   });
   storeSession(user.wallet, user.displayName || "Raider", token, walletLabel);
   return user.wallet as string;
@@ -227,7 +227,9 @@ export default function ConnectWalletButton() {
                 <div className="wallet-grid">
                   {injected.map((item) => (
                     <button key={item.uuid} className="wallet-option" disabled={busy} onClick={() => void connectInjected(item)}>
-                      <img src={item.icon} alt="" width={28} height={28} />
+                      {item.icon && /^(data:image\/|https:\/\/)/.test(item.icon) && (
+                        <img src={item.icon} alt="" width={28} height={28} />
+                      )}
                       <span>{item.name}</span>
                       <small>Installed</small>
                     </button>

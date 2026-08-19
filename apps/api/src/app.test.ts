@@ -1,8 +1,29 @@
 import request from "supertest";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { ActionType, Priority, SignalType } from "@prisma/client";
-import { createApp, scoreSubmission, buildMissionAlertMessage, buildShareCopy, missionTtlMs } from "./app";
+import { createApp, injectTestSession, scoreSubmission, buildMissionAlertMessage, buildShareCopy, missionTtlMs } from "./app";
 import { subscribeLiveFeed } from "./livefeed";
+
+// Test auth setup
+const TEST_WALLET = "0x1234567890123456789012345678901234567890";
+const TEST_TOKEN = "test-token-abc123";
+const AUTH_HEADER = `Bearer ${TEST_TOKEN}`;
+const SIGNAL_SECRET = "test-signal-secret";
+
+beforeAll(() => {
+  process.env.SIGNAL_INGEST_SECRET = SIGNAL_SECRET;
+  process.env.ADMIN_WALLETS = TEST_WALLET;
+  injectTestSession(TEST_TOKEN, TEST_WALLET);
+  // Additional test wallets for lead/member scenarios
+  injectTestSession("test-0xabc-token", "0xabc");
+  injectTestSession("test-0xlead-token", "0xlead");
+  injectTestSession("test-0xcto-token", "0xcto");
+  injectTestSession("test-0xmember-token", "0xmember");
+  injectTestSession("test-0xraid-token", "0xraid");
+  injectTestSession("test-0xnew-token", "0xnew");
+  injectTestSession("test-0xchallenger-token", "0xchallenger");
+  injectTestSession("test-0xdemo-token", "0xdemo");
+});
 
 describe("API validation and health", () => {
   const app = createApp({} as never);
@@ -14,7 +35,7 @@ describe("API validation and health", () => {
   });
 
   it("rejects invalid signal ingest payload", async () => {
-    const res = await request(app).post("/signals/ingest").send({
+    const res = await request(app).post("/signals/ingest").set("x-api-key", SIGNAL_SECRET).send({
       communityId: "demo-community",
       type: "INVALID_SIGNAL",
       severity: 20
@@ -24,7 +45,7 @@ describe("API validation and health", () => {
   });
 
   it("rejects invalid short link payload", async () => {
-    const res = await request(app).post("/links").send({
+    const res = await request(app).post("/links").set("authorization", AUTH_HEADER).send({
       communityId: "demo-community",
       targetUrl: "not-a-url"
     });
@@ -56,7 +77,7 @@ describe("signal to mission flow", () => {
       shortLink: { create: createLink }
     } as never);
 
-    const res = await request(app).post("/signals/ingest").send({
+    const res = await request(app).post("/signals/ingest").set("x-api-key", SIGNAL_SECRET).send({
       communityId: "demo-community",
       type: "MENTION_SPIKE",
       severity: 85,
@@ -86,7 +107,7 @@ describe("signal to mission flow", () => {
       mission: { findFirst: findMission, create: createMission }
     } as never);
 
-    const res = await request(app).post("/signals/ingest").send({
+    const res = await request(app).post("/signals/ingest").set("x-api-key", SIGNAL_SECRET).send({
       communityId: "demo-community",
       type: "KOL_POST",
       severity: 70,
@@ -133,7 +154,7 @@ describe("signal to mission flow", () => {
       shortLink: { create: createLink }
     } as never);
 
-    const res = await request(app).post("/signals/ingest").send({
+    const res = await request(app).post("/signals/ingest").set("x-api-key", SIGNAL_SECRET).send({
       chainId: "ethereum",
       contractAddress: "0x6982508145454ce325ddbe47a25d4ec3d2311933",
       type: "VOLUME_SPIKE",
@@ -192,7 +213,7 @@ describe("signal to mission flow", () => {
       shortLink: { create: vi.fn().mockResolvedValue({ id: "link-kol", code: "kolcta12" }) }
     } as never);
 
-    const res = await request(app).post("/signals/ingest").send({
+    const res = await request(app).post("/signals/ingest").set("x-api-key", SIGNAL_SECRET).send({
       communityId: "demo-community",
       type: "KOL_POST",
       severity: 88,
@@ -230,7 +251,7 @@ describe("signal to mission flow", () => {
       shortLink: { create: vi.fn().mockResolvedValue({ id: "link-t", code: "target01" }) }
     } as never);
 
-    const res = await request(app).post("/signals/ingest").send({
+    const res = await request(app).post("/signals/ingest").set("x-api-key", SIGNAL_SECRET).send({
       communityId: "demo-community",
       type: "KOL_POST",
       severity: 80,
@@ -245,7 +266,7 @@ describe("signal to mission flow", () => {
   });
 
   it("rejects ticker-only ingest so signals cannot land on a spoofed name", async () => {
-    const res = await request(createApp({} as never)).post("/signals/ingest").send({
+    const res = await request(createApp({} as never)).post("/signals/ingest").set("x-api-key", SIGNAL_SECRET).send({
       q: "PEPE",
       type: "MENTION_SPIKE",
       severity: 80,
@@ -259,7 +280,7 @@ describe("signal to mission flow", () => {
     const app = createApp({
       community: { findFirst: vi.fn().mockResolvedValue(null) }
     } as never);
-    const res = await request(app).post("/signals/ingest").send({
+    const res = await request(app).post("/signals/ingest").set("x-api-key", SIGNAL_SECRET).send({
       chainId: "ethereum",
       contractAddress: "0x6982508145454ce325ddbe47a25d4ec3d2311933",
       type: "WHALE_BUY",
@@ -434,7 +455,7 @@ describe("attribution tracking", () => {
       shortLink: { findMany }
     } as never);
 
-    const res = await request(app).get("/communities/demo-community/attribution");
+    const res = await request(app).get("/communities/demo-community/attribution").set("authorization", AUTH_HEADER);
     expect(res.status).toBe(200);
     expect(res.body[0]).toEqual({
       code: "abc12345",
@@ -476,7 +497,7 @@ describe("submissions", () => {
       leaderboardSnapshot: { create: createSnapshot }
     } as never);
 
-    const res = await request(app).post("/tasks/task-1/submissions").send({
+    const res = await request(app).post("/tasks/task-1/submissions").set("authorization", AUTH_HEADER).send({
       wallet: "0xdemo",
       proofUrl: "https://x.com/example/status/1",
       proofText: "copy pasta",
@@ -508,7 +529,7 @@ describe("submissions", () => {
       submission: { create: vi.fn() }
     } as never);
 
-    const res = await request(app).post("/tasks/task-1/submissions").send({
+    const res = await request(app).post("/tasks/task-1/submissions").set("authorization", AUTH_HEADER).send({
       wallet: "0xdemo",
       proofUrl: "https://x.com/example/status/1"
     });
@@ -535,7 +556,7 @@ describe("mission claims", () => {
       shortLink: { findFirst: findLink, create: createLink }
     } as never);
 
-    const res = await request(app).post("/missions/mission-1/claim").send({ wallet: "0xdemo" });
+    const res = await request(app).post("/missions/mission-1/claim").set("authorization", AUTH_HEADER).send({ wallet: "0xdemo" });
     expect(res.status).toBe(200);
     expect(res.body.claimed).toBe(true);
     expect(res.body.shortLink.code).toBe("raidcta1");
@@ -592,8 +613,8 @@ describe("mission claims", () => {
 describe("notification log", () => {
   it("records telegram and discord alerts after a test send", async () => {
     const app = createApp({} as never);
-    await request(app).post("/notifications/telegram/test");
-    const res = await request(app).get("/notifications");
+    await request(app).post("/notifications/telegram/test").set("authorization", AUTH_HEADER);
+    const res = await request(app).get("/notifications").set("authorization", AUTH_HEADER);
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body)).toBe(true);
     expect(res.body.some((entry: { channel: string }) => entry.channel === "TELEGRAM")).toBe(true);
@@ -683,7 +704,7 @@ describe("contributor profile", () => {
       }
     } as never);
 
-    const res = await request(app).get("/me?wallet=0xabc&communityId=demo-community");
+    const res = await request(app).get("/me").query({communityId:"demo-community"}).set("authorization", AUTH_HEADER);
     expect(res.status).toBe(200);
     expect(res.body.points).toBe(18);
     expect(res.body.rank).toBe(2);
@@ -761,7 +782,7 @@ describe("contributor profile", () => {
       }
     } as never);
 
-    const res = await request(app).get("/missions/m1?wallet=0xabc");
+    const res = await request(app).get("/missions/m1").set("authorization", "Bearer test-0xabc-token");
     expect(res.status).toBe(200);
     expect(res.body.nextPlay).toMatchObject({
       missionId: "m1",
@@ -845,7 +866,7 @@ describe("mission expiry and activity", () => {
     const res = await request(createApp({
       user: { findUnique: vi.fn().mockResolvedValue({ id: "user-1", wallet: "0xdemo" }) },
       mission: { findUnique: vi.fn().mockResolvedValue({ id: "mission-1", status: "EXPIRED", communityId: "demo-community" }) }
-    } as never)).post("/missions/mission-1/claim").send({ wallet: "0xdemo" });
+    } as never)).post("/missions/mission-1/claim").set("authorization", AUTH_HEADER).send({});
     expect(res.status).toBe(409);
   });
 
@@ -863,7 +884,7 @@ describe("mission expiry and activity", () => {
       submission: { findMany: vi.fn().mockResolvedValue([]) },
       score: { findMany: vi.fn().mockResolvedValue([]) }
     } as never);
-    const res = await request(app).get("/communities/demo-community/activity");
+    const res = await request(app).get("/communities/demo-community/activity").set("authorization", AUTH_HEADER);
     expect(res.status).toBe(200);
     expect(res.body[0]).toMatchObject({ type: "CLAIM", title: "Spike", wallet: "0xabc" });
   });
@@ -959,7 +980,7 @@ describe("CTO lead succession", () => {
       }
     } as never);
 
-    const res = await request(app).post("/communities/demo-community/lead/claim").send({ wallet: "0xchallenger" });
+    const res = await request(app).post("/communities/demo-community/lead/claim").set("authorization", AUTH_HEADER).send({ wallet: "0xchallenger" });
     expect(res.status).toBe(409);
     expect(res.body.lead.vacant).toBe(false);
   });
@@ -980,7 +1001,7 @@ describe("CTO lead succession", () => {
       communityMember: { findFirst, updateMany, upsert }
     } as never);
 
-    const res = await request(app).post("/communities/demo-community/lead/claim").send({ wallet: "0xchallenger" });
+    const res = await request(app).post("/communities/demo-community/lead/claim").set("authorization", AUTH_HEADER).send({ wallet: "0xchallenger" });
     expect(res.status).toBe(200);
     expect(res.body.claimed).toBe(true);
     expect(res.body.you.isLead).toBe(true);
@@ -1011,7 +1032,7 @@ describe("CTO lead succession", () => {
       }
     } as never);
 
-    const res = await request(app).post("/communities/demo-community/lead/claim").send({ wallet: "0xnew" });
+    const res = await request(app).post("/communities/demo-community/lead/claim").set("authorization", AUTH_HEADER).send({ wallet: "0xnew" });
     expect(res.status).toBe(200);
     expect(res.body.lead.wallet).toBe("0xnew");
   });
@@ -1023,7 +1044,7 @@ describe("CTO lead succession", () => {
         findUnique: vi.fn().mockResolvedValue({ id: "mem-2", role: "member" })
       }
     } as never);
-    const res = await request(app).post("/communities/demo-community/lead/resign").send({ wallet: "0xmember" });
+    const res = await request(app).post("/communities/demo-community/lead/resign").set("authorization", AUTH_HEADER).send({ wallet: "0xmember" });
     expect(res.status).toBe(403);
   });
 
@@ -1037,7 +1058,7 @@ describe("CTO lead succession", () => {
         findFirst: vi.fn().mockResolvedValue(null)
       }
     } as never);
-    const res = await request(app).post("/communities/demo-community/lead/resign").send({ wallet: "0xlead" });
+    const res = await request(app).post("/communities/demo-community/lead/resign").set("authorization", AUTH_HEADER).send({ wallet: "0xlead" });
     expect(res.status).toBe(200);
     expect(res.body.resigned).toBe(true);
     expect(res.body.lead.vacant).toBe(true);
@@ -1075,14 +1096,12 @@ describe("mission war room", () => {
       }
     } as never);
 
-    const denied = await request(app).post("/missions/mission-1/pin").send({
-      wallet: "0xmember",
+    const denied = await request(app).post("/missions/mission-1/pin").set("authorization", "Bearer test-0xmember-token").send({
       body: "fake pin"
     });
     expect(denied.status).toBe(403);
 
-    const ok = await request(app).post("/missions/mission-1/pin").send({
-      wallet: "0xlead",
+    const ok = await request(app).post("/missions/mission-1/pin").set("authorization", "Bearer test-0xlead-token").send({
       body: "Push the whale buy on X"
     });
     expect(ok.status).toBe(200);
@@ -1113,7 +1132,7 @@ describe("mission war room", () => {
       }
     } as never);
 
-    const res = await request(app).post("/missions/mission-1/check-in").send({ wallet: "0xraid" });
+    const res = await request(app).post("/missions/mission-1/check-in").set("authorization", AUTH_HEADER).send({ wallet: "0xraid" });
     expect(res.status).toBe(200);
     expect(res.body.checkedIn).toBe(true);
     expect(res.body.checkInCount).toBe(3);
@@ -1130,7 +1149,7 @@ describe("mission war room", () => {
         })
       },
       user: { findUnique: vi.fn().mockResolvedValue({ id: "user-2", wallet: "0xraid" }) }
-    } as never)).post("/missions/mission-1/check-in").send({ wallet: "0xraid" });
+    } as never)).post("/missions/mission-1/check-in").set("authorization", "Bearer test-0xraid-token").send({});
     expect(res.status).toBe(409);
   });
 
@@ -1147,7 +1166,7 @@ describe("mission war room", () => {
       },
       user: { findUnique: vi.fn().mockResolvedValue({ id: "user-9", wallet: "0xout" }) },
       communityMember: { findUnique: vi.fn().mockResolvedValue(null) }
-    } as never)).post("/missions/mission-1/check-in").send({ wallet: "0xout" });
+    } as never)).post("/missions/mission-1/check-in").set("authorization", AUTH_HEADER).send({});
     expect(res.status).toBe(403);
   });
 });
@@ -1176,20 +1195,17 @@ describe("X Community bind and bonus proof", () => {
       user: { findUnique: vi.fn().mockResolvedValue({ id: "user-1", wallet: "0xlead" }) }
     } as never);
 
-    const denied = await request(app).post("/communities/demo-community/x-community").send({
-      wallet: "0xmember",
+    const denied = await request(app).post("/communities/demo-community/x-community").set("authorization", AUTH_HEADER).send({
       url: "https://x.com/i/communities/123456789"
     });
     expect(denied.status).toBe(403);
 
-    const bad = await request(app).post("/communities/demo-community/x-community").send({
-      wallet: "0xlead",
+    const bad = await request(app).post("/communities/demo-community/x-community").set("authorization", "Bearer test-0xlead-token").send({
       url: "https://x.com/pepecoin"
     });
     expect(bad.status).toBe(400);
 
-    const ok = await request(app).post("/communities/demo-community/x-community").send({
-      wallet: "0xlead",
+    const ok = await request(app).post("/communities/demo-community/x-community").set("authorization", "Bearer test-0xlead-token").send({
       url: "https://x.com/i/communities/123456789"
     });
     expect(ok.status).toBe(200);
@@ -1216,7 +1232,7 @@ describe("X Community bind and bonus proof", () => {
       submission: { create: createSubmission }
     } as never);
 
-    const res = await request(app).post("/tasks/task-xc/submissions").send({
+    const res = await request(app).post("/tasks/task-xc/submissions").set("authorization", AUTH_HEADER).send({
       wallet: "0xdemo",
       proofUrl: "https://x.com/user/status/1"
     });
@@ -1247,7 +1263,7 @@ describe("X Community bind and bonus proof", () => {
       communityMember: { updateMany: vi.fn() }
     } as never);
 
-    const res = await request(app).post("/tasks/task-xc/submissions").send({
+    const res = await request(app).post("/tasks/task-xc/submissions").set("authorization", AUTH_HEADER).send({
       wallet: "0xdemo",
       proofUrl: "https://x.com/i/communities/123456789/posts/55"
     });
@@ -1273,7 +1289,7 @@ describe("X Community bind and bonus proof", () => {
       missionClaim: { findUnique: vi.fn().mockResolvedValue({ id: "claim-1" }) },
       submission: { create: createSubmission }
     } as never);
-    const same = await request(app).post("/tasks/task-reply/submissions").send({
+    const same = await request(app).post("/tasks/task-reply/submissions").set("authorization", AUTH_HEADER).send({
       wallet: "0xdemo",
       proofUrl: "https://x.com/whale/status/99"
     });
@@ -1303,7 +1319,7 @@ describe("X Community bind and bonus proof", () => {
       leaderboardSnapshot: { create: vi.fn() },
       communityMember: { updateMany: vi.fn() }
     } as never);
-    const res = await request(app).post("/tasks/task-reply/submissions").send({
+    const res = await request(app).post("/tasks/task-reply/submissions").set("authorization", AUTH_HEADER).send({
       wallet: "0xdemo",
       proofUrl: "https://x.com/raider/status/100"
     });
@@ -1392,14 +1408,12 @@ describe("raid feed", () => {
       kolWatch: { upsert }
     } as never);
 
-    const denied = await request(app).post("/communities/demo-community/kols").send({
-      wallet: "0xmember",
+    const denied = await request(app).post("/communities/demo-community/kols").set("authorization", AUTH_HEADER).send({
       handle: "@kol"
     });
     expect(denied.status).toBe(403);
 
-    const ok = await request(app).post("/communities/demo-community/kols").send({
-      wallet: "0xlead",
+    const ok = await request(app).post("/communities/demo-community/kols").set("authorization", "Bearer test-0xlead-token").send({
       handle: "@KOL"
     });
     expect(ok.status).toBe(200);
@@ -1415,7 +1429,7 @@ describe("raid feed", () => {
         updateMany: vi.fn()
       }
     } as never);
-    const res = await request(app).post("/communities/demo-community/feed/refresh").send({ wallet: "0xraid" });
+    const res = await request(app).post("/communities/demo-community/feed/refresh").set("authorization", AUTH_HEADER).send({ wallet: "0xraid" });
     expect(res.status).toBe(200);
     expect(res.body.provider).toBe("none");
   });
@@ -1474,7 +1488,7 @@ describe("raid feed", () => {
     const stop = subscribeLiveFeed("demo-community", (event) => {
       seen.push({ id: event.post.id, followers: event.kol?.followers });
     });
-    const res = await request(app).post("/communities/demo-community/feed/posts").send({
+    const res = await request(app).post("/communities/demo-community/feed/posts").set("authorization", AUTH_HEADER).send({
       url: "https://x.com/whale/status/99",
       text: "gm raiders",
       authorHandle: "whale"
@@ -1507,7 +1521,7 @@ describe("raid feed", () => {
         ])
       }
     } as never);
-    const res = await request(app).get("/communities/demo-community/feed?wallet=0xdemo");
+    const res = await request(app).get("/communities/demo-community/feed").set("authorization", "Bearer test-0xdemo-token");
     expect(res.status).toBe(200);
     expect(res.body.posts[0].youShilled).toBe(true);
     expect(res.body.shillHistory[0].you).toBe(true);
@@ -1536,7 +1550,7 @@ describe("raid feed", () => {
         ])
       }
     } as never);
-    const res = await request(app).get("/communities/demo-community/feed?wallet=0xdemo");
+    const res = await request(app).get("/communities/demo-community/feed").set("authorization", "Bearer test-0xdemo-token");
     expect(res.status).toBe(200);
     expect(res.body.posts[0].youProved).toBe(true);
     expect(res.body.posts[0].provedCount).toBe(1);
@@ -1658,7 +1672,7 @@ describe("raid feed", () => {
       }
     } as never);
 
-    const first = await request(app).post("/communities/demo-community/feed/p1/shill").send({ wallet: "0xdemo" });
+    const first = await request(app).post("/communities/demo-community/feed/p1/shill").set("authorization", AUTH_HEADER).send({ wallet: "0xdemo" });
     expect(first.status).toBe(200);
     expect(first.body.alreadyShilled).toBe(false);
     expect(first.body.kit.copy).toContain("$PEPE");
@@ -1666,13 +1680,13 @@ describe("raid feed", () => {
     expect(first.body.focus.postId).toBe("p1");
     expect(createShill).toHaveBeenCalledTimes(1);
 
-    const dup = await request(app).post("/communities/demo-community/feed/p1/shill").send({ wallet: "0xdemo" });
+    const dup = await request(app).post("/communities/demo-community/feed/p1/shill").set("authorization", AUTH_HEADER).send({ wallet: "0xdemo" });
     expect(dup.status).toBe(200);
     expect(dup.body.alreadyShilled).toBe(true);
     expect(dup.body.kit.intentUrl).toContain("in_reply_to=1");
     expect(createShill).toHaveBeenCalledTimes(1);
 
-    const again = await request(app).post("/communities/demo-community/feed/p1/shill").send({ wallet: "0xdemo", reshill: true });
+    const again = await request(app).post("/communities/demo-community/feed/p1/shill").set("authorization", AUTH_HEADER).send({ wallet: "0xdemo", reshill: true });
     expect(again.status).toBe(200);
     expect(again.body.reshill).toBe(true);
     expect(createShill).toHaveBeenCalledTimes(2);
@@ -1694,7 +1708,7 @@ describe("raid feed", () => {
     const stop = subscribeLiveFeed("demo-community", (event) => {
       if (event.type === "focus") seen.push(event.focus?.postId ?? null);
     });
-    const res = await request(app).post("/communities/demo-community/feed/p2/focus").send({ wallet: "0xdemo" });
+    const res = await request(app).post("/communities/demo-community/feed/p2/focus").set("authorization", AUTH_HEADER).send({ wallet: "0xdemo" });
     stop();
     expect(res.status).toBe(200);
     expect(res.body.focus.postId).toBe("p2");
@@ -1754,7 +1768,7 @@ describe("raid feed", () => {
         create: vi.fn().mockResolvedValue({ id: "s2" })
       }
     } as never);
-    const res = await request(app).post("/communities/demo-community/feed/p2/shill").send({ wallet: "0xdemo" });
+    const res = await request(app).post("/communities/demo-community/feed/p2/shill").set("authorization", AUTH_HEADER).send({ wallet: "0xdemo" });
     expect(res.status).toBe(409);
     expect(update).not.toHaveBeenCalled();
     expect(res.body.focus.postId).toBe("p1");
@@ -1786,7 +1800,7 @@ describe("raid feed", () => {
         updateMany: vi.fn()
       }
     } as never);
-    const res = await request(app).post("/communities/demo-community/feed/p2/focus").send({ wallet: "0xdemo" });
+    const res = await request(app).post("/communities/demo-community/feed/p2/focus").set("authorization", AUTH_HEADER).send({ wallet: "0xdemo" });
     expect(res.status).toBe(403);
     expect(update).not.toHaveBeenCalled();
   });
@@ -1816,7 +1830,7 @@ describe("raid feed", () => {
         updateMany: vi.fn()
       }
     } as never);
-    const res = await request(app).post("/communities/demo-community/feed/p2/focus").send({ wallet: "0xlead" });
+    const res = await request(app).post("/communities/demo-community/feed/p2/focus").set("authorization", "Bearer test-0xlead-token").send({});
     expect(res.status).toBe(200);
     expect(res.body.focus.postId).toBe("p2");
     expect(update).toHaveBeenCalledTimes(1);
@@ -1843,7 +1857,7 @@ describe("raid feed", () => {
         updateMany: vi.fn()
       }
     } as never);
-    const res = await request(app).post("/communities/demo-community/feed/p2/focus").send({ wallet: "0xdemo" });
+    const res = await request(app).post("/communities/demo-community/feed/p2/focus").set("authorization", AUTH_HEADER).send({ wallet: "0xdemo" });
     expect(res.status).toBe(200);
     expect(res.body.focus.postId).toBe("p2");
     expect(update).toHaveBeenCalledTimes(1);
@@ -1873,7 +1887,7 @@ describe("raid feed", () => {
         updateMany: vi.fn()
       }
     } as never);
-    const denied = await request(app).post("/communities/demo-community/feed/focus/clear").send({ wallet: "0xdemo" });
+    const denied = await request(app).post("/communities/demo-community/feed/focus/clear").set("authorization", AUTH_HEADER).send({ wallet: "0xdemo" });
     expect(denied.status).toBe(403);
     expect(update).not.toHaveBeenCalled();
   });
@@ -1922,7 +1936,7 @@ describe("raid feed", () => {
       engagementEvent: { create: vi.fn() },
       leaderboardSnapshot: { create: vi.fn() }
     } as never);
-    const res = await request(app).post("/communities/demo-community/feed/p1/proof").send({
+    const res = await request(app).post("/communities/demo-community/feed/p1/proof").set("authorization", AUTH_HEADER).send({
       wallet: "0xdemo",
       proofUrl: "https://x.com/me/status/100"
     });
@@ -1981,21 +1995,21 @@ describe("raid feed", () => {
       leaderboardSnapshot: { create: vi.fn() }
     } as never);
 
-    const beforeShill = await request(app).post("/communities/demo-community/feed/p1/proof").send({
+    const beforeShill = await request(app).post("/communities/demo-community/feed/p1/proof").set("authorization", AUTH_HEADER).send({
       wallet: "0xdemo",
       proofUrl: "https://x.com/me/status/100"
     });
     expect(beforeShill.status).toBe(403);
     expect(beforeShill.body.error).toContain("Shill this tweet first");
 
-    const kolUrl = await request(app).post("/communities/demo-community/feed/p1/proof").send({
+    const kolUrl = await request(app).post("/communities/demo-community/feed/p1/proof").set("authorization", AUTH_HEADER).send({
       wallet: "0xdemo",
       proofUrl: "https://x.com/whale/status/99"
     });
     expect(kolUrl.status).toBe(400);
     expect(kolUrl.body.error).toContain("KOL post");
 
-    const dup = await request(app).post("/communities/demo-community/feed/p1/proof").send({
+    const dup = await request(app).post("/communities/demo-community/feed/p1/proof").set("authorization", AUTH_HEADER).send({
       wallet: "0xdemo",
       proofUrl: "https://x.com/me/status/100"
     });
@@ -2049,14 +2063,14 @@ describe("raid feed", () => {
       leaderboardSnapshot: { create: vi.fn() }
     } as never);
 
-    const placeholder = await request(app).post("/communities/demo-community/feed/p1/proof").send({
+    const placeholder = await request(app).post("/communities/demo-community/feed/p1/proof").set("authorization", AUTH_HEADER).send({
       wallet: "0xdemo",
       proofUrl: "https://x.com/yourhandle/status/"
     });
     expect(placeholder.status).toBe(400);
     expect(createSubmission).not.toHaveBeenCalled();
 
-    const trimmed = await request(app).post("/communities/demo-community/feed/p1/proof").send({
+    const trimmed = await request(app).post("/communities/demo-community/feed/p1/proof").set("authorization", AUTH_HEADER).send({
       wallet: "0xdemo",
       proofUrl: "  https://x.com/me/status/100  "
     });
@@ -2115,7 +2129,7 @@ describe("raid feed", () => {
       missionClaim: { upsert: vi.fn() },
       submission: { create: createSubmission }
     } as never);
-    const res = await request(app).post("/communities/demo-community/feed/p1/proof").send({
+    const res = await request(app).post("/communities/demo-community/feed/p1/proof").set("authorization", AUTH_HEADER).send({
       wallet: "0xdemo",
       proofUrl: "https://x.com/me/status/100"
     });

@@ -1,3 +1,7 @@
+// SECURITY NOTE: The session token is currently stored in localStorage.
+// For production hardening, migrate to HttpOnly + Secure + SameSite=Strict cookies
+// set by the API on login. This eliminates XSS-based token theft.
+// Until then, a strong Content-Security-Policy (set via helmet in the API) reduces XSS risk.
 const WALLET_KEY = "shillops.wallet";
 const NAME_KEY = "shillops.displayName";
 const TOKEN_KEY = "shillops.token";
