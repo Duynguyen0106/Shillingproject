@@ -1523,6 +1523,85 @@ export function createApp(prisma: PrismaClient) {
     });
   }));
 
+  // ── Community-wide leaderboard (ranks all communities by activity) ──
+  app.get("/communities/leaderboard", asyncRoute(async (req, res) => {
+    const sort = (req.query.sort as string) || "shills"; // shills | members | points | missions
+    const limit = Math.min(Number(req.query.limit) || 20, 50);
+
+    const communities = await prisma.community.findMany({
+      include: {
+        _count: {
+          select: {
+            members: true,
+            missions: true,
+            feedShills: true,
+            feedPosts: true
+          }
+        }
+      }
+    });
+
+    // Aggregate points per community
+    const pointsAgg = await prisma.score.groupBy({
+      by: ["communityId"],
+      _sum: { points: true }
+    });
+    const pointsMap = new Map(pointsAgg.map((r) => [r.communityId, r._sum.points ?? 0]));
+
+    // Active missions in last 48h
+    const since48h = new Date(Date.now() - 48 * 3600_000);
+    const activeMissions = await prisma.mission.groupBy({
+      by: ["communityId"],
+      where: { createdAt: { gte: since48h } },
+      _count: { id: true }
+    });
+    const activeMissionsMap = new Map(activeMissions.map((r) => [r.communityId, r._count.id]));
+
+    // Shills in last 24h
+    const since24h = new Date(Date.now() - 24 * 3600_000);
+    const recentShills = await prisma.feedShill.groupBy({
+      by: ["communityId"],
+      where: { createdAt: { gte: since24h } },
+      _count: { id: true }
+    });
+    const recentShillsMap = new Map(recentShills.map((r) => [r.communityId, r._count.id]));
+
+    // Is focus raid live?
+    const focusLive = communities.filter(
+      (c) => c.focusAt && Date.now() - new Date(c.focusAt).getTime() < 60 * 60_000
+    ).map((c) => c.id);
+    const focusSet = new Set(focusLive);
+
+    const rows = communities.map((c) => ({
+      id: c.id,
+      name: c.name,
+      ticker: c.ticker,
+      description: c.description,
+      imageUrl: c.imageUrl,
+      chainId: c.chainId,
+      contractAddress: c.contractAddress,
+      dexUrl: c.dexUrl,
+      memberCount: c._count.members,
+      missionCount: c._count.missions,
+      activeMissions24h: activeMissionsMap.get(c.id) ?? 0,
+      shillCount: c._count.feedShills,
+      shills24h: recentShillsMap.get(c.id) ?? 0,
+      totalPoints: pointsMap.get(c.id) ?? 0,
+      focusRaidLive: focusSet.has(c.id),
+      createdAt: c.createdAt
+    }));
+
+    const sorted = rows.sort((a, b) => {
+      if (sort === "members") return b.memberCount - a.memberCount;
+      if (sort === "points") return b.totalPoints - a.totalPoints;
+      if (sort === "missions") return b.activeMissions24h - a.activeMissions24h;
+      // default: shills24h, then total shills as tiebreaker
+      return b.shills24h - a.shills24h || b.shillCount - a.shillCount;
+    });
+
+    res.json(sorted.slice(0, limit).map((r, idx) => ({ ...r, rank: idx + 1 })));
+  }));
+
   app.get("/communities/:id", asyncRoute(async (req, res) => {
     const community = await prisma.community.findUnique({ where: { id: req.params.id } });
     if (!community) return res.status(404).json({ error: "Community not found" });

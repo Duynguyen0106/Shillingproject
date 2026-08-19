@@ -15,7 +15,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           <NavFeedLink />
           <Link href="/app">Missions</Link>
           <Link href="/app/me">My Ops</Link>
-          <Link href="/app/leaderboard">Leaderboard</Link>
+          <Link href="/app/leaderboard">Communities</Link>
           <Link href="/app/admin/signals">Signals</Link>
           <Link href="/app/admin/attribution">Attribution</Link>
           <Link href="/app/admin/notifications">Alerts</Link>

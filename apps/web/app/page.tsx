@@ -13,6 +13,7 @@ export default function LandingPage() {
             Shill<span className="landing-logo-accent">Ops</span>
           </span>
           <div className="landing-nav-links">
+            <Link href="/app/leaderboard">Communities</Link>
             <Link href="/app/feed">Raid Feed</Link>
             <Link href="/app">Missions</Link>
             <Link href="/app/me">My Ops</Link>
@@ -36,7 +37,8 @@ export default function LandingPage() {
             with your community in real time.
           </p>
           <div className="landing-hero-actions">
-            <Link href="/app/feed" className="btn landing-btn-primary">Open Raid Feed →</Link>
+            <Link href="/app/leaderboard" className="btn landing-btn-primary">Browse Communities →</Link>
+            <Link href="/app/feed" className="btn landing-btn-secondary">Open Raid Feed</Link>
             <Link href="/app/onboarding" className="btn landing-btn-secondary">Get Started</Link>
           </div>
           <div className="landing-hero-stats">
@@ -200,6 +202,7 @@ export default function LandingPage() {
             Shill<span className="landing-logo-accent">Ops</span>
           </span>
           <div className="landing-footer-links">
+            <Link href="/app/leaderboard">Communities</Link>
             <Link href="/app/feed">Raid Feed</Link>
             <Link href="/app">Missions</Link>
             <Link href="/app/leaderboard">Leaderboard</Link>
