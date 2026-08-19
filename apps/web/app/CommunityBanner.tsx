@@ -4,10 +4,11 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useSelectedCommunity } from "../lib/useSelectedCommunity";
 import { getStoredCommunityId } from "../lib/community";
-import { FOCUS_EVENT, PROOF_EVENT, SHILL_EVENT, runShill, type FocusRaid } from "../lib/shillAction";
+import { FOCUS_EVENT, PROOF_EVENT, RAID_EVENT, SHILL_EVENT, runShill, type FocusRaid } from "../lib/shillAction";
 import { shortAddress } from "../lib/session";
 import { useConnectedWallet } from "../lib/useConnectedWallet";
 import ProofPaste from "./ProofPaste";
+import RaidScoreboard from "./RaidScoreboard";
 
 export default function CommunityBanner() {
   const { community } = useSelectedCommunity();
@@ -26,7 +27,21 @@ export default function CommunityBanner() {
       const next = event?.focus ?? null;
       const same = Boolean(next && focusPostId.current === next.postId);
       focusPostId.current = next?.postId ?? null;
-      setFocus(next);
+      setFocus((current) => {
+        if (!next) return null;
+        if (same && current) {
+          return {
+            ...next,
+            youShilled: Boolean(next.youShilled) || current.youShilled,
+            youProved: Boolean(next.youProved) || current.youProved,
+            provedCount: next.provedCount ?? current.provedCount,
+            liveProvedCount: next.liveProvedCount ?? current.liveProvedCount,
+            liveRaiderCount: next.liveRaiderCount ?? current.liveRaiderCount,
+            raiderCount: next.raiderCount ?? current.raiderCount
+          };
+        }
+        return next;
+      });
       setYouShilled((prev) => Boolean(next?.youShilled) || (same && prev));
       setYouProved((prev) => Boolean(next?.youProved) || (same && prev));
       if (!same) setNote("");
@@ -39,23 +54,48 @@ export default function CommunityBanner() {
       setNote("");
     };
     const onShill = (message: Event) => {
-      const event = (message as CustomEvent<{ communityId?: string; postId?: string }>).detail;
+      const event = (message as CustomEvent<{ communityId?: string; postId?: string; liveRaiderCount?: number }>).detail;
       if (event?.communityId && event.communityId !== getStoredCommunityId()) return;
-      if (event?.postId && event.postId === focusPostId.current) setYouShilled(true);
+      if (event?.postId && event.postId === focusPostId.current) {
+        setYouShilled(true);
+        if (typeof event.liveRaiderCount === "number") {
+          setFocus((current) => current ? { ...current, liveRaiderCount: event.liveRaiderCount, youShilled: true } : current);
+        }
+      }
+    };
+    const onRaid = (message: Event) => {
+      const event = (message as CustomEvent<{ communityId?: string; postId?: string; liveRaiderCount?: number; raiderCount?: number }>).detail;
+      if (event?.communityId && event.communityId !== getStoredCommunityId()) return;
+      if (event?.postId !== focusPostId.current) return;
+      setFocus((current) => current ? {
+        ...current,
+        liveRaiderCount: event.liveRaiderCount ?? current.liveRaiderCount,
+        raiderCount: event.raiderCount ?? current.raiderCount
+      } : current);
     };
     const onProof = (message: Event) => {
-      const event = (message as CustomEvent<{ postId?: string; communityId?: string }>).detail;
+      const event = (message as CustomEvent<{ postId?: string; communityId?: string; provedCount?: number; liveProvedCount?: number; you?: boolean }>).detail;
       if (event?.communityId && event.communityId !== getStoredCommunityId()) return;
-      if (event?.postId && event.postId === focusPostId.current) setYouProved(true);
+      if (event?.postId && event.postId === focusPostId.current) {
+        if (event.you) setYouProved(true);
+        setFocus((current) => current ? {
+          ...current,
+          youProved: current.youProved || Boolean(event.you),
+          provedCount: event.provedCount ?? (event.you ? (current.provedCount ?? 0) + 1 : current.provedCount),
+          liveProvedCount: event.liveProvedCount ?? current.liveProvedCount
+        } : current);
+      }
     };
     window.addEventListener(FOCUS_EVENT, onFocus);
     window.addEventListener("shillops-community", onCommunity);
     window.addEventListener(SHILL_EVENT, onShill);
+    window.addEventListener(RAID_EVENT, onRaid);
     window.addEventListener(PROOF_EVENT, onProof);
     return () => {
       window.removeEventListener(FOCUS_EVENT, onFocus);
       window.removeEventListener("shillops-community", onCommunity);
       window.removeEventListener(SHILL_EVENT, onShill);
+      window.removeEventListener(RAID_EVENT, onRaid);
       window.removeEventListener(PROOF_EVENT, onProof);
     };
   }, []);
@@ -101,6 +141,12 @@ export default function CommunityBanner() {
           <span>
             Raid: reply to <strong>@{focus.authorHandle}</strong>
           </span>
+          <RaidScoreboard
+            compact
+            provedCount={focus.provedCount}
+            liveRaiderCount={focus.liveRaiderCount}
+            until={focus.until}
+          />
           {connected && !youShilled && (
             <button className="btn" disabled={busy} type="button" onClick={() => void shillFocus()}>
               Shill this tweet

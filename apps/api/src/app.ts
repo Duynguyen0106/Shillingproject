@@ -28,9 +28,9 @@ import {
   type CanonicalToken
 } from "./dexscreener";
 import { ingestNormalizedPost, kolProfileData, parseWatchHandle, refreshAllCommunityFeeds, refreshCommunityFeed } from "./feed";
-import { liveListenerCount, postsCreatedSince, publishLiveFocus, publishLiveRaid, snapshotKol, subscribeLiveFeed } from "./livefeed";
+import { liveListenerCount, postsCreatedSince, publishLiveFocus, publishLiveProof, publishLiveRaid, snapshotKol, subscribeLiveFeed } from "./livefeed";
 import { attachShillState, serializeShillHistory } from "./shill";
-import { buildShillCopy, buildShillKit, isRaidReplyPlay, liveRaiderIds, pickRaidReplyTask, proofIsReplyToRaidTarget, raidReplyAlreadyScored } from "./shillkit";
+import { attachProofState, buildShillCopy, buildShillKit, liveRaiderIds, pickRaidReplyTask, proofIsReplyToRaidTarget, raidReplyAlreadyScored } from "./shillkit";
 import { isFocusLive, serializeFocus, focusChangeAllowed, shillAllowedDuringFocus } from "./focus";
 import { applyFeedFilters, applyKolFilters, attachKolStats, configuredFeedProvider, fetchUserProfile, mentionMatches, parseXHandle, parseXStatusUrl, postHeat } from "./xfeed";
 
@@ -839,6 +839,52 @@ async function loadFocusPayload(
   });
 }
 
+async function decorateFocusWithStats(
+  prisma: PrismaClient,
+  focus: ReturnType<typeof serializeFocus>,
+  viewerUserId?: string | null
+) {
+  if (!focus) return null;
+  const shills = await prisma.feedShill?.findMany?.({
+    where: { feedPostId: focus.postId },
+    include: { user: { select: { wallet: true, displayName: true } } }
+  }) ?? [];
+  const proofRows = focus.missionId
+    ? await prisma.submission?.findMany?.({
+        where: { task: { missionId: focus.missionId } },
+        include: {
+          task: { select: { missionId: true, details: true } },
+          user: { select: { wallet: true, displayName: true } }
+        }
+      }) ?? []
+    : [];
+  const withShill = attachShillState([{ id: focus.postId, missionId: focus.missionId }], shills, viewerUserId)[0];
+  const withProof = attachProofState([withShill], proofRows, viewerUserId)[0];
+  return {
+    ...focus,
+    youShilled: Boolean(withShill.youShilled),
+    youProved: Boolean(withProof.youProved),
+    provedCount: withProof.provedCount ?? 0,
+    liveProvedCount: withProof.liveProvedCount ?? 0,
+    liveRaiderCount: withShill.liveRaiderCount ?? 0,
+    raiderCount: withShill.raiderCount ?? 0
+  };
+}
+
+async function loadCommunityFocus(
+  prisma: PrismaClient,
+  community?: {
+    id: string;
+    focusPostId?: string | null;
+    focusAt?: Date | string | null;
+    focusById?: string | null;
+  } | null,
+  viewerUserId?: string | null
+) {
+  if (!community) return null;
+  return decorateFocusWithStats(prisma, await loadFocusPayload(prisma, community, []), viewerUserId);
+}
+
 async function setFocusRaid(
   prisma: PrismaClient,
   community: { id: string; ticker: string },
@@ -1070,7 +1116,12 @@ export function createApp(prisma: PrismaClient) {
         at: shill.createdAt,
         reshill: shill.reshill,
         post: shill.feedPost
-      }))
+      })),
+      focus: await loadCommunityFocus(
+        prisma,
+        await prisma.community?.findUnique?.({ where: { id: communityId } }),
+        user.id
+      )
     });
   }));
 
@@ -1114,6 +1165,7 @@ export function createApp(prisma: PrismaClient) {
     const actorWallet = resolveActorWallet(req, parsed.wallet);
     const lead = community ? await loadLeadSeat(prisma, community.id) : null;
     const you = community ? await loadMembership(prisma, community.id, actorWallet) : null;
+    const viewer = actorWallet ? await prisma.user?.findUnique?.({ where: { wallet: actorWallet } }) : null;
     res.json({
       token,
       listings: lookup?.listings ?? [],
@@ -1122,6 +1174,7 @@ export function createApp(prisma: PrismaClient) {
       community,
       lead,
       you,
+      focus: await loadCommunityFocus(prisma, community, viewer?.id),
       ambiguous: parsedQuery.kind === "search",
       warning: "Communities are uniquely bound to a chain + contract. Ignore Telegram/Discord names that do not match this address."
     });
@@ -1183,9 +1236,12 @@ export function createApp(prisma: PrismaClient) {
   app.get("/communities/:id", asyncRoute(async (req, res) => {
     const community = await prisma.community.findUnique({ where: { id: req.params.id } });
     if (!community) return res.status(404).json({ error: "Community not found" });
+    const wallet = resolveActorWallet(req, typeof req.query.wallet === "string" ? req.query.wallet : undefined);
+    const viewer = wallet ? await prisma.user?.findUnique?.({ where: { wallet } }) : null;
     res.json({
       ...community,
-      lead: await loadLeadSeat(prisma, community.id)
+      lead: await loadLeadSeat(prisma, community.id),
+      focus: await loadCommunityFocus(prisma, community, viewer?.id)
     });
   }));
 
@@ -1324,15 +1380,18 @@ export function createApp(prisma: PrismaClient) {
         .map((post) => (post as { missionId?: string | null }).missionId)
         .filter((id): id is string => Boolean(id))
     )];
-    const proofRows = viewer?.id && missionIds.length
+    const proofRows = missionIds.length
       ? await prisma.submission?.findMany?.({
-          where: { userId: viewer.id, task: { missionId: { in: missionIds } } },
-          include: { task: { select: { missionId: true, details: true } } }
+          where: { task: { missionId: { in: missionIds } } },
+          include: {
+            task: { select: { missionId: true, details: true } },
+            user: { select: { wallet: true, displayName: true } }
+          },
+          orderBy: { submittedAt: "desc" },
+          take: 400
         }) ?? []
       : [];
-    const provedMissions = new Set(
-      proofRows.filter((row) => isRaidReplyPlay(row.task?.details)).map((row) => row.task.missionId)
-    );
+    const withProof = attachProofState(posts, proofRows, viewer?.id);
     const kols = applyKolFilters(attachKolStats(rawKols, rawPosts), filters)
       .sort((a, b) => (b.followers ?? -1) - (a.followers ?? -1));
     const shillHistory = serializeShillHistory(shills.slice(0, 30), viewer?.id).map((item, index) => ({
@@ -1348,16 +1407,25 @@ export function createApp(prisma: PrismaClient) {
         : { id: item.feedPostId }
     }));
     const talkTrack = pinned?.pinText ?? null;
-    const focus = await loadFocusPayload(prisma, community, rawPosts);
-    const decorated = posts.map((post) => {
-      const missionId = (post as { missionId?: string | null }).missionId;
-      return {
-        ...post,
-        focused: focus?.postId === post.id,
-        youProved: Boolean(missionId && provedMissions.has(missionId))
-      };
-    });
-    const focusPost = decorated.find((post) => post.id === focus?.postId);
+    const focusBase = await loadFocusPayload(prisma, community, rawPosts);
+    const decorated = withProof.map((post) => ({
+      ...post,
+      focused: focusBase?.postId === post.id
+    }));
+    const focusPost = decorated.find((post) => post.id === focusBase?.postId);
+    const focus = focusBase
+      ? focusPost
+        ? {
+          ...focusBase,
+          youShilled: Boolean(focusPost.youShilled),
+          youProved: Boolean(focusPost.youProved),
+          provedCount: focusPost.provedCount ?? 0,
+          liveProvedCount: focusPost.liveProvedCount ?? 0,
+          liveRaiderCount: focusPost.liveRaiderCount ?? 0,
+          raiderCount: focusPost.raiderCount ?? 0
+        }
+        : await decorateFocusWithStats(prisma, focusBase, viewer?.id)
+      : null;
     res.json({
       provider: configuredFeedProvider(),
       ticker: community.ticker,
@@ -1368,13 +1436,7 @@ export function createApp(prisma: PrismaClient) {
         contractAddress: community.contractAddress,
         pinText: talkTrack
       }),
-      focus: focus
-        ? {
-          ...focus,
-          youShilled: Boolean(focusPost?.youShilled),
-          youProved: Boolean(focusPost?.youProved)
-        }
-        : null,
+      focus,
       you: {
         isLead: Boolean(viewer && !seat.vacant && sameWallet(seat.wallet, viewer.wallet)),
         canSteerFocus: Boolean(viewer && (seat.vacant || sameWallet(seat.wallet, viewer.wallet)))
@@ -1769,7 +1831,39 @@ export function createApp(prisma: PrismaClient) {
       proofText,
       engagementValue: 25
     });
-    res.json({ ok: true, pointsAwarded: submission.pointsAwarded, missionId: mission.id, taskId: task.id, submission });
+    const scoredRows = await prisma.submission?.findMany?.({
+      where: { task: { missionId: mission.id } },
+      include: {
+        task: { select: { missionId: true, details: true } },
+        user: { select: { wallet: true, displayName: true } }
+      }
+    }) ?? [];
+    const scored = attachProofState(
+      [{ id: post.id, missionId: mission.id }],
+      scoredRows,
+      user.id
+    )[0];
+    const provedCount = Math.max(scored.provedCount, 1);
+    const liveProvedCount = Math.max(scored.liveProvedCount, 1);
+    publishLiveProof({
+      type: "proof",
+      communityId: community.id,
+      postId: post.id,
+      url: post.url,
+      raider: { wallet, displayName: user.displayName ?? null },
+      pointsAwarded: submission.pointsAwarded,
+      provedCount,
+      liveProvedCount
+    });
+    res.json({
+      ok: true,
+      pointsAwarded: submission.pointsAwarded,
+      missionId: mission.id,
+      taskId: task.id,
+      provedCount,
+      liveProvedCount,
+      submission
+    });
   }));
 
   app.post("/signals/ingest", asyncRoute(async (req, res) => {
@@ -1987,6 +2081,11 @@ export function createApp(prisma: PrismaClient) {
       warRoom: serializeWarRoom(mission),
       nextPlay: nextPlayFromMission(mission, actorWallet),
       raidTarget: extractSignalTarget(signalMeta(mission.signal?.metadata), mission.signal?.sourceRef),
+      focus: await loadCommunityFocus(
+        prisma,
+        await prisma.community?.findUnique?.({ where: { id: mission.communityId } }),
+        actorWallet ? (await prisma.user?.findUnique?.({ where: { wallet: actorWallet } }))?.id : null
+      ),
       ...withExpiryFields(mission)
     });
   }));

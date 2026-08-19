@@ -691,6 +691,7 @@ describe("contributor profile", () => {
     expect(res.body.submissions[0].pointsAwarded).toBe(18);
     expect(res.body.clicks).toBe(7);
     expect(res.body.links[0].code).toBe("raidcta1");
+    expect(res.body.focus).toBeNull();
     expect(res.body.nextPlay).toMatchObject({
       missionId: "m1",
       taskId: "t2",
@@ -721,6 +722,7 @@ describe("contributor profile", () => {
     expect(res.body.warRoom.checkInCount).toBe(0);
     expect(res.body.nextPlay).toBeNull();
     expect(res.body.raidTarget).toBeNull();
+    expect(res.body.focus).toBeNull();
   });
 
   it("returns a personal next play on mission details when a wallet is present", async () => {
@@ -929,6 +931,7 @@ describe("DexScreener contract lookup", () => {
     expect(res.body.trust.reasons.some((reason: string) => reason.includes("community takeover"))).toBe(true);
     expect(res.body.lead.wallet).toBe("0xlead");
     expect(res.body.lead.vacant).toBe(false);
+    expect(res.body.focus).toBeNull();
   });
 
   it("requires a wallet to bind a new contract community", async () => {
@@ -1524,13 +1527,19 @@ describe("raid feed", () => {
       feedShill: { findMany: vi.fn().mockResolvedValue([]) },
       submission: {
         findMany: vi.fn().mockResolvedValue([
-          { task: { missionId: "m1", details: "play:reply-narrative\ntarget:https://x.com/whale/status/1" } }
+          {
+            userId: "u1",
+            submittedAt: "2026-08-19T01:00:00.000Z",
+            task: { missionId: "m1", details: "play:reply-narrative\ntarget:https://x.com/whale/status/1" },
+            user: { wallet: "0xdemo", displayName: "Raider" }
+          }
         ])
       }
     } as never);
     const res = await request(app).get("/communities/demo-community/feed?wallet=0xdemo");
     expect(res.status).toBe(200);
     expect(res.body.posts[0].youProved).toBe(true);
+    expect(res.body.posts[0].provedCount).toBe(1);
   });
 
   it("returns the pinned talk track as shill copy", async () => {
@@ -1570,8 +1579,58 @@ describe("raid feed", () => {
     const res = await request(app).get("/communities/demo-community/feed");
     expect(res.status).toBe(200);
     expect(res.body.focus.postId).toBe("p1");
+    expect(typeof res.body.focus.remainingMs).toBe("number");
+    expect(res.body.focus.provedCount).toBe(0);
     expect(res.body.posts.find((post: { id: string }) => post.id === "p1").focused).toBe(true);
     expect(res.body.posts.find((post: { id: string }) => post.id === "p2").focused).toBe(false);
+  });
+
+  it("returns the live focus raid on the community hub payload", async () => {
+    const app = createApp({
+      community: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "demo-community",
+          ticker: "PEPE",
+          focusPostId: "p1",
+          focusAt: new Date(),
+          focusById: "u1"
+        })
+      },
+      feedPost: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "p1",
+          url: "https://x.com/whale/status/1",
+          authorHandle: "whale",
+          text: "gm",
+          kind: "KOL_POST",
+          missionId: "m1"
+        })
+      },
+      user: { findUnique: vi.fn().mockResolvedValue({ wallet: "0xlead", displayName: "Lead" }) },
+      communityMember: { findFirst: vi.fn().mockResolvedValue(null) },
+      feedShill: {
+        findMany: vi.fn().mockResolvedValue([
+          { feedPostId: "p1", userId: "u2", createdAt: new Date(), user: { wallet: "0x2", displayName: "B" } }
+        ])
+      },
+      submission: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            userId: "u2",
+            submittedAt: new Date(),
+            task: { missionId: "m1", details: "play:reply-narrative\ntarget:https://x.com/whale/status/1" },
+            user: { wallet: "0x2", displayName: "B" }
+          }
+        ])
+      }
+    } as never);
+    const res = await request(app).get("/communities/demo-community");
+    expect(res.status).toBe(200);
+    expect(res.body.focus.postId).toBe("p1");
+    expect(res.body.focus.authorHandle).toBe("whale");
+    expect(res.body.focus.provedCount).toBe(1);
+    expect(res.body.focus.raiderCount).toBe(1);
+    expect(typeof res.body.focus.remainingMs).toBe("number");
   });
 
   it("records a first shill and refuses a duplicate unless reshill is set", async () => {
@@ -1870,6 +1929,7 @@ describe("raid feed", () => {
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
     expect(res.body.pointsAwarded).toBe(18);
+    expect(res.body.provedCount).toBe(1);
     expect(createSubmission).toHaveBeenCalledTimes(1);
   });
 

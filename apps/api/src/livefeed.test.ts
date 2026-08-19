@@ -4,6 +4,7 @@ import {
   postsCreatedSince,
   publishLiveFocus,
   publishLivePost,
+  publishLiveProof,
   publishLiveRaid,
   subscribeLiveFeed,
   toLiveFeedEvent
@@ -100,6 +101,25 @@ describe("live raid feed", () => {
       }
     });
     expect(seen).toEqual(["p1"]);
+    stop();
+  });
+
+  it("pushes scored replies so the room sees the pile-on", () => {
+    const seen: Array<{ postId: string; provedCount: number }> = [];
+    const stop = subscribeLiveFeed("demo-community", (event) => {
+      if (event.type === "proof") seen.push({ postId: event.postId, provedCount: event.provedCount });
+    });
+    publishLiveProof({
+      type: "proof",
+      communityId: "demo-community",
+      postId: "p1",
+      url: "https://x.com/whale/status/1",
+      raider: { wallet: "0xdemo", displayName: "Raider" },
+      pointsAwarded: 18,
+      provedCount: 3,
+      liveProvedCount: 2
+    });
+    expect(seen).toEqual([{ postId: "p1", provedCount: 3 }]);
     stop();
   });
 

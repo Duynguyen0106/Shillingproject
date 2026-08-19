@@ -1,8 +1,10 @@
 import Link from "next/link";
 import ActivityFeed from "../ActivityFeed";
+import FocusRaidCard from "../FocusRaidCard";
 import { getRequestCommunityId } from "../../lib/communityServer";
 import { apiGetSafe } from "../../lib/api";
 import { formatRemaining } from "../../lib/missionTime";
+import type { FocusRaid } from "../../lib/shillAction";
 
 type Mission = {
   id: string;
@@ -19,7 +21,10 @@ type Mission = {
 
 export default async function MissionBoardPage() {
   const communityId = getRequestCommunityId();
-  const missions = await apiGetSafe<Mission[]>(`/communities/${communityId}/missions?status=active`, []);
+  const [missions, community] = await Promise.all([
+    apiGetSafe<Mission[]>(`/communities/${communityId}/missions?status=active`, []),
+    apiGetSafe<{ focus?: FocusRaid | null }>(`/communities/${communityId}`, { focus: null })
+  ]);
   const sorted = [...missions].sort((a, b) => b.urgency - a.urgency);
   return (
     <main className="container">
@@ -28,6 +33,7 @@ export default async function MissionBoardPage() {
       <p className="muted">
         Use the <Link href="/app/feed">raid feed</Link> to click KOL posts and mentions. This board is the scored raid that opens from those posts.
       </p>
+      {community.focus && <FocusRaidCard focus={community.focus} />}
       {sorted.length === 0 && (
         <div className="card">
           <p>No community bound yet, so a daily pulse could not be created. Bind a mint first, then ingest a signal to overlay a raid.</p>

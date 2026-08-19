@@ -4,7 +4,9 @@ import CompleteMissionButton from "./CompleteMissionButton";
 import ShareKit from "../../../ShareKit";
 import PlayTasks, { type PlayTask } from "./PlayTasks";
 import WarRoom, { type WarRoomData } from "./WarRoom";
+import FocusRaidCard from "../../../FocusRaidCard";
 import { formatRemaining } from "../../../../lib/missionTime";
+import type { FocusRaid } from "../../../../lib/shillAction";
 
 type ShortLink = {
   code: string;
@@ -33,6 +35,7 @@ type Mission = {
   communityId?: string;
   warRoom?: WarRoomData;
   raidTarget?: string | null;
+  focus?: FocusRaid | null;
 };
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:4000";
@@ -58,6 +61,7 @@ export default async function MissionDetailsPage({ params }: { params: { id: str
         <span>Claims: {mission.claimsCount ?? mission.claims?.length ?? 0}</span>
         {typeof mission.remainingMs === "number" && <span>{formatRemaining(mission.remainingMs)}</span>}
       </div>
+      {mission.focus && <FocusRaidCard focus={mission.focus} compact />}
       {mission.raidTarget && (
         <div className="card">
           <strong>Reply / quote this post</strong>

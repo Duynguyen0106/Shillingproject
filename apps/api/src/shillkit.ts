@@ -128,3 +128,49 @@ export function proofIsReplyToRaidTarget(proofUrl: string, details?: string | nu
   }
   return { ok: true };
 }
+
+export type ProofRow = {
+  userId: string;
+  submittedAt?: Date | string;
+  createdAt?: Date | string;
+  task: { missionId: string; details?: string | null };
+  user?: { wallet: string; displayName?: string | null } | null;
+};
+
+export function attachProofState<T extends { id: string; missionId?: string | null }>(
+  posts: T[],
+  rows: ProofRow[],
+  viewerUserId?: string | null,
+  now = Date.now()
+) {
+  const raidRows = rows.filter((row) => isRaidReplyPlay(row.task.details));
+  const byMission = new Map<string, ProofRow[]>();
+  for (const row of raidRows) {
+    const list = byMission.get(row.task.missionId) ?? [];
+    list.push(row);
+    byMission.set(row.task.missionId, list);
+  }
+  return posts.map((post) => {
+    const list = post.missionId ? byMission.get(post.missionId) ?? [] : [];
+    const unique = new Set(list.map((row) => row.userId));
+    const liveIds = liveRaiderIds(
+      list.map((row) => ({ userId: row.userId, createdAt: row.submittedAt ?? row.createdAt ?? new Date().toISOString() })),
+      now
+    );
+    const yours = viewerUserId ? list.filter((row) => row.userId === viewerUserId) : [];
+    return {
+      ...post,
+      provedCount: unique.size,
+      liveProvedCount: liveIds.length,
+      youProved: yours.length > 0,
+      liveProved: liveIds.slice(0, 6).map((userId) => {
+        const row = list.find((item) => item.userId === userId);
+        return {
+          wallet: row?.user?.wallet ?? "",
+          displayName: row?.user?.displayName ?? null,
+          you: Boolean(viewerUserId && userId === viewerUserId)
+        };
+      })
+    };
+  });
+}

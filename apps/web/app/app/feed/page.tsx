@@ -10,6 +10,7 @@ import { authHeaders, getStoredWallet, shortAddress } from "../../../lib/session
 import { copyText, FOCUS_EVENT, PROOF_EVENT, RAID_EVENT, clearFocus, runFocus, runShill, type FocusRaid } from "../../../lib/shillAction";
 import { useConnectedWallet } from "../../../lib/useConnectedWallet";
 import ProofPaste from "../../ProofPaste";
+import RaidScoreboard from "../../RaidScoreboard";
 
 type FeedPost = {
   id: string;
@@ -36,6 +37,9 @@ type FeedPost = {
   youShillCount?: number;
   youLastShilledAt?: string | null;
   youProved?: boolean;
+  provedCount?: number;
+  liveProvedCount?: number;
+  liveProved?: Array<{ wallet: string; displayName?: string | null; you?: boolean }>;
   lastShilledAt?: string | null;
   liveRaiderCount?: number;
   liveRaiders?: Array<{ wallet: string; displayName?: string | null; at: string; you?: boolean }>;
@@ -199,8 +203,13 @@ export default function RaidFeedPage() {
               liveRaiders: liveRaiders.slice(0, 6)
             };
           }),
-          focus: current.focus && current.focus.postId === event.postId && mine
-            ? { ...current.focus, youShilled: true }
+          focus: current.focus && current.focus.postId === event.postId
+            ? {
+              ...current.focus,
+              youShilled: current.focus.youShilled || mine,
+              liveRaiderCount: event.liveRaiderCount ?? current.focus.liveRaiderCount,
+              raiderCount: event.raiderCount ?? current.focus.raiderCount
+            }
             : current.focus
         };
       });
@@ -227,15 +236,27 @@ export default function RaidFeedPage() {
     };
     window.addEventListener(FOCUS_EVENT, onFocus);
     const onProof = (message: Event) => {
-      const event = (message as CustomEvent<{ communityId?: string; postId?: string }>).detail;
+      const event = (message as CustomEvent<{ communityId?: string; postId?: string; provedCount?: number; liveProvedCount?: number; you?: boolean }>).detail;
       if (event?.communityId && event.communityId !== getStoredCommunityId()) return;
       if (!event?.postId) return;
       setFeed((current) => current ? {
         ...current,
         focus: current.focus && current.focus.postId === event.postId
-          ? { ...current.focus, youProved: true }
+          ? {
+            ...current.focus,
+            youProved: current.focus.youProved || Boolean(event.you),
+            provedCount: event.provedCount ?? current.focus.provedCount,
+            liveProvedCount: event.liveProvedCount ?? current.focus.liveProvedCount
+          }
           : current.focus,
-        posts: current.posts.map((post) => post.id === event.postId ? { ...post, youProved: true } : post)
+        posts: current.posts.map((post) => post.id === event.postId
+          ? {
+            ...post,
+            youProved: post.youProved || Boolean(event.you),
+            provedCount: event.provedCount ?? post.provedCount,
+            liveProvedCount: event.liveProvedCount ?? post.liveProvedCount
+          }
+          : post)
       } : current);
     };
     window.addEventListener(PROOF_EVENT, onProof);
@@ -388,6 +409,11 @@ export default function RaidFeedPage() {
           <h3>Reply to @{feed.focus.authorHandle}</h3>
           <p>{feed.focus.text}</p>
           <p className="muted">Same tweet, many replies. Other posts cannot be shilled until the CTO lead moves this. After you reply, paste YOUR status URL here — not the KOL tweet.</p>
+          <RaidScoreboard
+            provedCount={feed.focus.provedCount ?? feed.posts.find((post) => post.id === feed.focus!.postId)?.provedCount}
+            liveRaiderCount={feed.focus.liveRaiderCount ?? feed.posts.find((post) => post.id === feed.focus!.postId)?.liveRaiderCount}
+            until={feed.focus.until}
+          />
           <div className="row">
             <button className="btn" disabled={busy} onClick={() => void runShill({
               communityId: getStoredCommunityId(),
@@ -577,6 +603,7 @@ export default function RaidFeedPage() {
               ? `You shilled this${post.youShillCount && post.youShillCount > 1 ? ` ${post.youShillCount}×` : ""}${post.youLastShilledAt ? ` · ${timeAgo(post.youLastShilledAt)}` : ""}`
               : "You have not shilled this post yet"}
             {post.youProved ? " · reply scored" : ""}
+            {(post.provedCount ?? 0) > 0 ? ` · ${post.provedCount} scored` : ""}
             {(post.liveRaiderCount ?? 0) > 0 ? ` · ${post.liveRaiderCount} on this now` : ""}
             {(post.raiderCount ?? 0) > 0 ? ` · ${post.raiderCount} raider${post.raiderCount === 1 ? "" : "s"}` : ""}
           </p>

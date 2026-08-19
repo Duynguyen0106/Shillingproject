@@ -5,6 +5,7 @@ import { API_BASE } from "./config";
 import { getStoredCommunityId } from "./community";
 import { authHeaders } from "./session";
 import { useConnectedWallet } from "./useConnectedWallet";
+import type { FocusRaid } from "./shillAction";
 
 export type ContributorClaim = {
   missionId: string;
@@ -69,6 +70,7 @@ export type ContributorProfile = {
   submissions: ContributorSubmission[];
   links?: ContributorLink[];
   shills?: ContributorShill[];
+  focus?: FocusRaid | null;
 };
 
 export function useContributorProfile() {

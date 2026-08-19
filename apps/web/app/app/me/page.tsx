@@ -2,6 +2,7 @@
 
 import ConnectWalletButton from "../../ConnectWalletButton";
 import CopyLink from "../../CopyLink";
+import FocusRaidCard from "../../FocusRaidCard";
 import Link from "next/link";
 import { useContributorProfile } from "../../../lib/useContributorProfile";
 import { shortAddress } from "../../../lib/session";
@@ -32,6 +33,7 @@ export default function MyOpsPage() {
         {profile?.displayName ? ` · ${profile.displayName}` : ""}
       </p>
       {loading && !profile && <p className="muted">Loading your ops...</p>}
+      {profile?.focus && <FocusRaidCard focus={profile.focus} compact />}
       {profile?.nextPlay && (
         <div className="card next-play">
           <div className="kicker">Your next play</div>

@@ -23,10 +23,15 @@ export type FocusRaid = {
   kind?: string | null;
   at: string;
   until: string;
+  remainingMs?: number;
   by: { wallet: string; displayName: string | null } | null;
   missionId?: string | null;
   youShilled?: boolean;
   youProved?: boolean;
+  provedCount?: number;
+  liveProvedCount?: number;
+  liveRaiderCount?: number;
+  raiderCount?: number;
 };
 
 export type ShillResult = {
@@ -81,7 +86,16 @@ export async function runShill(input: { communityId: string; postId: string; res
   if (focus) dispatchFocus(input.communityId, focus);
   if (typeof window !== "undefined") {
     window.dispatchEvent(new CustomEvent(SHILL_EVENT, {
-      detail: { communityId: input.communityId, postId: input.postId, reshill: Boolean(input.reshill), kit: body.kit, missionId: body.missionId, alreadyShilled: Boolean(body.alreadyShilled) }
+      detail: {
+        communityId: input.communityId,
+        postId: input.postId,
+        reshill: Boolean(input.reshill),
+        kit: body.kit,
+        missionId: body.missionId,
+        alreadyShilled: Boolean(body.alreadyShilled),
+        liveRaiderCount: body.liveRaiderCount,
+        raiderCount: body.raiderCount
+      }
     }));
   }
   if (body.alreadyShilled && !input.reshill) {
@@ -136,12 +150,21 @@ export type ProofResult = {
   error?: string;
   alreadyProved?: boolean;
   pointsAwarded?: number;
+  provedCount?: number;
+  liveProvedCount?: number;
   missionId?: string | null;
 };
 
-export function dispatchProof(communityId: string, postId: string, pointsAwarded?: number) {
+export function dispatchProof(detail: {
+  communityId: string;
+  postId: string;
+  pointsAwarded?: number;
+  provedCount?: number;
+  liveProvedCount?: number;
+  you?: boolean;
+}) {
   if (typeof window === "undefined") return;
-  window.dispatchEvent(new CustomEvent(PROOF_EVENT, { detail: { communityId, postId, pointsAwarded } }));
+  window.dispatchEvent(new CustomEvent(PROOF_EVENT, { detail }));
 }
 
 export async function runProof(input: {
@@ -158,8 +181,9 @@ export async function runProof(input: {
     body: JSON.stringify({ wallet, proofUrl: input.proofUrl, proofText: input.proofText })
   });
   const body = await res.json().catch(() => ({}));
+  const counts = { provedCount: body.provedCount, liveProvedCount: body.liveProvedCount, pointsAwarded: body.pointsAwarded };
   if (!res.ok) {
-    if (body.alreadyProved) dispatchProof(input.communityId, input.postId, body.pointsAwarded);
+    if (body.alreadyProved) dispatchProof({ communityId: input.communityId, postId: input.postId, you: true, ...counts });
     return {
       ok: false,
       error: body.error || "Could not score this reply.",
@@ -168,11 +192,13 @@ export async function runProof(input: {
     };
   }
   notifyOps();
-  dispatchProof(input.communityId, input.postId, body.pointsAwarded);
+  dispatchProof({ communityId: input.communityId, postId: input.postId, you: true, ...counts });
   return {
     ok: true,
     alreadyProved: Boolean(body.alreadyProved),
     pointsAwarded: body.pointsAwarded,
+    provedCount: body.provedCount,
+    liveProvedCount: body.liveProvedCount,
     missionId: body.missionId ?? null
   };
 }

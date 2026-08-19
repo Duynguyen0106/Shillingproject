@@ -24,6 +24,7 @@ export type FocusState = {
   until: string;
   by: { wallet: string; displayName: string | null } | null;
   missionId?: string | null;
+  remainingMs: number;
 };
 
 export function focusUntil(focusAt: Date | string, windowMs = FOCUS_RAID_MS): Date {
@@ -81,6 +82,7 @@ export function serializeFocus(input: {
   by?: FocusCaller | null;
 }, now = Date.now(), windowMs = FOCUS_RAID_MS): FocusState | null {
   if (!isFocusLive(input, now, windowMs) || !input.post || !input.focusAt) return null;
+  const until = focusUntil(input.focusAt, windowMs);
   return {
     postId: input.post.id,
     url: input.post.url,
@@ -88,8 +90,9 @@ export function serializeFocus(input: {
     text: input.post.text ?? "",
     kind: input.post.kind ?? null,
     at: new Date(input.focusAt).toISOString(),
-    until: focusUntil(input.focusAt, windowMs).toISOString(),
+    until: until.toISOString(),
     by: input.by ? { wallet: input.by.wallet, displayName: input.by.displayName ?? null } : null,
-    missionId: input.post.missionId ?? null
+    missionId: input.post.missionId ?? null,
+    remainingMs: Math.max(0, until.getTime() - now)
   };
 }

@@ -9,6 +9,7 @@ import { FOCUS_EVENT, PROOF_EVENT, RAID_EVENT, SHILL_EVENT, dispatchFocus, runSh
 import { getStoredWallet } from "../lib/session";
 import { useConnectedWallet } from "../lib/useConnectedWallet";
 import ProofPaste from "./ProofPaste";
+import RaidScoreboard from "./RaidScoreboard";
 
 type Toast = LiveFeedEvent & { toastId: string; youShilled?: boolean; youProved?: boolean; focused?: boolean };
 
@@ -71,7 +72,18 @@ export default function LiveFeedToasts() {
         youShilled: Boolean(next.youShilled) || shilled.current.has(next.postId),
         youProved: Boolean(next.youProved) || proved.current.has(next.postId)
       };
-      setFocus(hydrated);
+      setFocus((current) => {
+        if (current?.postId === hydrated.postId) {
+          return {
+            ...hydrated,
+            provedCount: hydrated.provedCount ?? current.provedCount,
+            liveProvedCount: hydrated.liveProvedCount ?? current.liveProvedCount,
+            liveRaiderCount: hydrated.liveRaiderCount ?? current.liveRaiderCount,
+            raiderCount: hydrated.raiderCount ?? current.raiderCount
+          };
+        }
+        return hydrated;
+      });
       const sticky = toastFromFocus(
         getStoredCommunityId(),
         hydrated,
@@ -173,6 +185,25 @@ export default function LiveFeedToasts() {
           /* ignore */
         }
       });
+      source.addEventListener("proof", (message) => {
+        try {
+          const event = JSON.parse((message as MessageEvent).data) as {
+            communityId?: string;
+            postId?: string;
+            provedCount?: number;
+            liveProvedCount?: number;
+            pointsAwarded?: number;
+            raider?: { wallet?: string };
+          };
+          if (event.communityId && event.communityId !== getStoredCommunityId()) return;
+          const wallet = getStoredWallet();
+          const yours = Boolean(event.raider?.wallet && wallet && event.raider.wallet.toLowerCase() === wallet.toLowerCase());
+          if (yours && event.postId) proved.current.add(event.postId);
+          window.dispatchEvent(new CustomEvent(PROOF_EVENT, { detail: { ...event, you: yours } }));
+        } catch {
+          /* ignore */
+        }
+      });
       source.onerror = () => setLive(false);
     }
 
@@ -206,20 +237,38 @@ export default function LiveFeedToasts() {
       setToasts((current) => current.map((item) => item.post.id === event.postId ? { ...item, youShilled: true } : item));
     };
     const onRaid = (message: Event) => {
-      const event = (message as CustomEvent<{ communityId?: string; postId?: string; raider?: { wallet?: string } }>).detail;
+      const event = (message as CustomEvent<{ communityId?: string; postId?: string; liveRaiderCount?: number; raiderCount?: number; raider?: { wallet?: string } }>).detail;
       if (event?.communityId && event.communityId !== getStoredCommunityId()) return;
       if (!event?.postId) return;
       const wallet = getStoredWallet();
-      if (!wallet || !event.raider?.wallet || event.raider.wallet.toLowerCase() !== wallet.toLowerCase()) return;
-      shilled.current.add(event.postId);
-      setToasts((current) => current.map((item) => item.post.id === event.postId ? { ...item, youShilled: true } : item));
+      if (wallet && event.raider?.wallet && event.raider.wallet.toLowerCase() === wallet.toLowerCase()) {
+        shilled.current.add(event.postId);
+        setToasts((current) => current.map((item) => item.post.id === event.postId ? { ...item, youShilled: true } : item));
+      }
+      setFocus((current) => current && current.postId === event.postId
+        ? {
+          ...current,
+          liveRaiderCount: event.liveRaiderCount ?? current.liveRaiderCount,
+          raiderCount: event.raiderCount ?? current.raiderCount
+        }
+        : current);
     };
     const onProof = (message: Event) => {
-      const event = (message as CustomEvent<{ communityId?: string; postId?: string }>).detail;
+      const event = (message as CustomEvent<{ communityId?: string; postId?: string; provedCount?: number; liveProvedCount?: number; you?: boolean }>).detail;
       if (event?.communityId && event.communityId !== getStoredCommunityId()) return;
       if (!event?.postId) return;
-      proved.current.add(event.postId);
-      setToasts((current) => current.map((item) => item.post.id === event.postId ? { ...item, youProved: true } : item));
+      if (event.you) {
+        proved.current.add(event.postId);
+        setToasts((current) => current.map((item) => item.post.id === event.postId ? { ...item, youProved: true } : item));
+      }
+      setFocus((current) => current && current.postId === event.postId
+        ? {
+          ...current,
+          youProved: current.youProved || Boolean(event.you),
+          provedCount: event.provedCount ?? current.provedCount,
+          liveProvedCount: event.liveProvedCount ?? current.liveProvedCount
+        }
+        : current);
     };
     window.addEventListener(SHILL_EVENT, onShill);
     window.addEventListener(RAID_EVENT, onRaid);
@@ -285,7 +334,17 @@ export default function LiveFeedToasts() {
                 {already && <span className="badge ok">Already shilled</span>}
                 {scored && <span className="badge ok">Reply scored</span>}
               </div>
-              {focused && <small>Reply this tweet — then paste YOUR status URL here, not the KOL post.</small>}
+              {focused && (
+                <>
+                  <small>Reply this tweet — then paste YOUR status URL here, not the KOL post.</small>
+                  <RaidScoreboard
+                    compact
+                    provedCount={focus?.provedCount}
+                    liveRaiderCount={focus?.liveRaiderCount}
+                    until={focus?.until}
+                  />
+                </>
+              )}
               {kol && !focused && (
                 <small>
                   {kol.displayName ? `${kol.displayName} · ` : ""}

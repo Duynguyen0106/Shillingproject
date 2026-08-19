@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildShillCopy, buildShillKit, liveRaiderIds, pickRaidReplyTask, proofIsReplyToRaidTarget, raidReplyAlreadyScored, xReplyIntentUrl } from "./shillkit";
+import { attachProofState, buildShillCopy, buildShillKit, liveRaiderIds, pickRaidReplyTask, proofIsReplyToRaidTarget, raidReplyAlreadyScored, xReplyIntentUrl } from "./shillkit";
 
 describe("shill kit", () => {
   it("builds talk track copy with ticker and CA", () => {
@@ -61,5 +61,20 @@ describe("shill kit", () => {
     expect(raidReplyAlreadyScored(tasks, "https://x.com/whale/status/99", ["reply"])).toBe(true);
     expect(raidReplyAlreadyScored(tasks, "https://x.com/whale/status/99", [])).toBe(false);
     expect(raidReplyAlreadyScored(tasks, "https://x.com/other/status/1", ["reply"])).toBe(false);
+  });
+
+  it("counts unique raid-reply proofs per post mission", () => {
+    const posts = attachProofState(
+      [{ id: "p1", missionId: "m1" }, { id: "p2", missionId: "m2" }],
+      [
+        { userId: "u1", submittedAt: "2026-08-19T01:00:00.000Z", task: { missionId: "m1", details: "play:reply-narrative\ntarget:https://x.com/whale/status/1" }, user: { wallet: "0x1", displayName: "A" } },
+        { userId: "u2", submittedAt: "2026-08-19T01:01:00.000Z", task: { missionId: "m1", details: "play:quote-signal\ntarget:https://x.com/whale/status/1" }, user: { wallet: "0x2", displayName: "B" } },
+        { userId: "u1", submittedAt: "2026-08-19T01:02:00.000Z", task: { missionId: "m2", details: "play:share-telegram" }, user: { wallet: "0x1", displayName: "A" } }
+      ],
+      "u1",
+      Date.parse("2026-08-19T01:05:00.000Z")
+    );
+    expect(posts[0]).toMatchObject({ youProved: true, provedCount: 2, liveProvedCount: 2 });
+    expect(posts[1]).toMatchObject({ youProved: false, provedCount: 0 });
   });
 });

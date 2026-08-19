@@ -16,8 +16,8 @@ type ActivityEvent = {
 
 const labels: Record<ActivityEvent["type"], string> = {
   CLAIM: "claimed",
-  SUBMISSION: "submitted proof on",
-  CLICK: "drove a click",
+  SUBMISSION: "scored",
+  CLICK: "drove a click on",
   SHILL: ""
 };
 
@@ -37,7 +37,7 @@ export default async function ActivityFeed({ communityId }: { communityId: strin
           <div className="row">
             <span className="badge">{event.type}</span>
             <strong>{event.displayName || shortWallet(event.wallet)}</strong>
-            <span className="muted">{labels[event.type]} {event.title}</span>
+            <span className="muted">{event.type === "SHILL" ? event.title : `${labels[event.type]} ${event.title}`}</span>
             {event.points != null && <span>{event.points} pts</span>}
           </div>
         </div>

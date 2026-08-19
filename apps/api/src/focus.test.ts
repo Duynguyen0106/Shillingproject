@@ -73,7 +73,8 @@ describe("focus raid", () => {
       url: "https://x.com/whale/status/9",
       authorHandle: "whale",
       by: { wallet: "0xlead", displayName: "Lead" },
-      missionId: null
+      missionId: null,
+      remainingMs: 2 * 60 * 60 * 1000 - 10 * 60 * 1000
     });
   });
 });

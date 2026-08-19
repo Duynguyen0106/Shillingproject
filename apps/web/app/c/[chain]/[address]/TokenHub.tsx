@@ -8,6 +8,8 @@ import { formatRemaining } from "../../../../lib/missionTime";
 import { authHeaders, getStoredWallet, shortAddress } from "../../../../lib/session";
 import { useConnectedWallet } from "../../../../lib/useConnectedWallet";
 import ConnectWalletButton from "../../../ConnectWalletButton";
+import FocusRaidCard from "../../../FocusRaidCard";
+import type { FocusRaid } from "../../../../lib/shillAction";
 
 type TrustReport = {
   level: "ok" | "caution" | "high-risk";
@@ -84,6 +86,7 @@ type LookupResponse = {
   } | null;
   lead?: LeadSeat | null;
   you?: Membership | null;
+  focus?: FocusRaid | null;
   ambiguous?: boolean;
   warning?: string;
 };
@@ -439,6 +442,7 @@ export default function TokenHub({ chain, address }: { chain: string; address: s
           )}
         </div>
       )}
+      {data?.focus && <FocusRaidCard focus={data.focus} />}
       {community && (
         <div className="card">
           <h3>Live missions for this mint</h3>
