@@ -31,7 +31,7 @@ import { ingestNormalizedPost, kolProfileData, parseWatchHandle, refreshAllCommu
 import { liveListenerCount, postsCreatedSince, publishLiveFocus, publishLiveRaid, snapshotKol, subscribeLiveFeed } from "./livefeed";
 import { attachShillState, serializeShillHistory } from "./shill";
 import { buildShillCopy, buildShillKit, liveRaiderIds, proofIsReplyToRaidTarget } from "./shillkit";
-import { isFocusLive, serializeFocus, focusChangeAllowed } from "./focus";
+import { isFocusLive, serializeFocus, focusChangeAllowed, shillAllowedDuringFocus } from "./focus";
 import { applyFeedFilters, applyKolFilters, attachKolStats, configuredFeedProvider, fetchUserProfile, mentionMatches, parseXHandle, parseXStatusUrl, postHeat } from "./xfeed";
 
 const appUrl = process.env.APP_URL || "http://localhost:3000";
@@ -779,13 +779,14 @@ async function loadFocusPayload(
 
 async function setFocusRaid(
   prisma: PrismaClient,
-  communityId: string,
+  community: { id: string; ticker: string },
   post: { id: string; url: string; authorHandle: string; text?: string | null; kind?: string | null },
-  user: { id: string; wallet: string; displayName?: string | null }
+  user: { id: string; wallet: string; displayName?: string | null },
+  opts?: { announce?: boolean }
 ) {
   const focusAt = new Date();
   await prisma.community?.update?.({
-    where: { id: communityId },
+    where: { id: community.id },
     data: { focusPostId: post.id, focusAt, focusById: user.id }
   });
   const focus = serializeFocus({
@@ -794,13 +795,21 @@ async function setFocusRaid(
     post,
     by: { wallet: user.wallet, displayName: user.displayName ?? null }
   });
-  publishLiveFocus({ type: "focus", communityId, focus });
+  publishLiveFocus({ type: "focus", communityId: community.id, focus });
+  if (opts?.announce !== false) {
+    await dispatchAlert(
+      `🎯 Focus raid for ${community.ticker}\nEveryone reply to @${post.authorHandle}\n${post.url}\nFeed: ${appUrl}/app/feed`
+    );
+  }
   return focus;
 }
 
-async function actorIsActiveLead(prisma: PrismaClient, communityId: string, wallet: string) {
+async function loadFocusSteer(prisma: PrismaClient, communityId: string, wallet: string) {
   const seat = await loadLeadSeat(prisma, communityId);
-  return !seat.vacant && sameWallet(seat.wallet, wallet);
+  return {
+    isLead: !seat.vacant && sameWallet(seat.wallet, wallet),
+    seatVacant: seat.vacant
+  };
 }
 
 async function promoteLead(prisma: PrismaClient, communityId: string, userId: string) {
@@ -1276,7 +1285,8 @@ export function createApp(prisma: PrismaClient) {
       }),
       focus,
       you: {
-        isLead: Boolean(viewer && !seat.vacant && sameWallet(seat.wallet, viewer.wallet))
+        isLead: Boolean(viewer && !seat.vacant && sameWallet(seat.wallet, viewer.wallet)),
+        canSteerFocus: Boolean(viewer && (seat.vacant || sameWallet(seat.wallet, viewer.wallet)))
       },
       filters,
       serverTime: new Date().toISOString(),
@@ -1435,6 +1445,21 @@ export function createApp(prisma: PrismaClient) {
       where: { userId_communityId: { userId: user.id, communityId: community.id } }
     });
     if (!member) return res.status(403).json({ error: "Join this mint before shilling" });
+    const liveFocus = isFocusLive(community);
+    const offFocus = shillAllowedDuringFocus({
+      live: liveFocus,
+      focusPostId: community.focusPostId,
+      postId: post.id
+    });
+    if (!offFocus.ok) {
+      const focus = await loadFocusPayload(prisma, community, [post]);
+      return res.status(409).json({
+        error: focus?.authorHandle
+          ? `Focus raid is on @${focus.authorHandle}. Shill that tweet so replies stack in one thread.`
+          : offFocus.error,
+        focus
+      });
+    }
     const prior = await prisma.feedShill?.count?.({ where: { feedPostId: post.id, userId: user.id } }) ?? 0;
     const pinText = await loadTalkTrack(prisma, community.id, post.missionId);
     const kit = buildShillKit({
@@ -1510,7 +1535,7 @@ export function createApp(prisma: PrismaClient) {
     });
     await touchMemberActivity(prisma, user.id, community.id);
     const focus = prior === 0 && !isFocusLive(community)
-      ? await setFocusRaid(prisma, community.id, post, user)
+      ? await setFocusRaid(prisma, community, post, user)
       : await loadFocusPayload(prisma, community, [post]);
     res.json({
       url: post.url,
@@ -1543,10 +1568,11 @@ export function createApp(prisma: PrismaClient) {
     });
     if (!member) return res.status(403).json({ error: "Join this mint before calling a focus raid" });
     const live = isFocusLive(community);
-    const isLead = await actorIsActiveLead(prisma, community.id, wallet);
+    const { isLead, seatVacant } = await loadFocusSteer(prisma, community.id, wallet);
     const allowed = focusChangeAllowed({
       action: "set",
       isLead,
+      seatVacant,
       live,
       currentPostId: community.focusPostId,
       nextPostId: post.id
@@ -1555,7 +1581,7 @@ export function createApp(prisma: PrismaClient) {
     const samePost = live && community.focusPostId === post.id;
     const focus = samePost && !isLead
       ? await loadFocusPayload(prisma, community, [post])
-      : await setFocusRaid(prisma, community.id, post, user);
+      : await setFocusRaid(prisma, community, post, user, { announce: !(samePost && isLead) });
     await touchMemberActivity(prisma, user.id, community.id);
     res.json({ focus, url: post.url });
   }));
@@ -1573,10 +1599,11 @@ export function createApp(prisma: PrismaClient) {
       })
       : null;
     if (!member) return res.status(403).json({ error: "Join this mint before clearing the focus raid" });
-    const isLead = await actorIsActiveLead(prisma, community.id, wallet);
+    const { isLead, seatVacant } = await loadFocusSteer(prisma, community.id, wallet);
     const allowed = focusChangeAllowed({
       action: "clear",
       isLead,
+      seatVacant,
       live: isFocusLive(community),
       currentPostId: community.focusPostId
     });

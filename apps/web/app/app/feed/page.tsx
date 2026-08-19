@@ -74,7 +74,7 @@ type FeedResponse = {
   talkTrack?: string | null;
   shillCopy?: string;
   focus?: FocusRaid | null;
-  you?: { isLead?: boolean };
+  you?: { isLead?: boolean; canSteerFocus?: boolean };
   kols: KolWatch[];
   posts: FeedPost[];
   shillHistory?: ShillHistoryItem[];
@@ -274,6 +274,7 @@ export default function RaidFeedPage() {
     setBusy(false);
     if (!result.ok) {
       setStatus(result.error || "Could not claim this post.");
+      await load();
       return;
     }
     if (result.alreadyShilled && !reshill) {
@@ -281,11 +282,9 @@ export default function RaidFeedPage() {
       await load();
       return;
     }
-    setStatus(reshill
-      ? "Talk track copied. Reply composer is open — then submit YOUR reply URL as proof."
-      : result.focus
-        ? "This is the raid. Everyone reply to this tweet. Talk track copied."
-        : "Talk track copied. Reply on X, then submit YOUR reply URL as proof.");
+    setStatus(result.missionId
+      ? "Talk track copied. Reply on X, then paste YOUR reply URL on the mission."
+      : "Talk track copied. Reply composer is open.");
     await load();
   }
 
@@ -335,7 +334,7 @@ export default function RaidFeedPage() {
       <div className="kicker">Do not hunt on X</div>
       <h1>Raid Feed</h1>
       <p className="muted">
-        New KOL posts pop in live. First shill (or Everyone here) locks the room onto one tweet. Only the CTO lead can move or clear that focus. Shill copies the talk track and opens that reply.
+        New KOL posts pop in live. First shill locks the room onto one tweet. Other posts stay readable but cannot be shilled until the CTO lead moves the focus. Paste YOUR reply URL on the mission after you post.
       </p>
       {feed && (
         <div className="row">
@@ -361,7 +360,7 @@ export default function RaidFeedPage() {
           <div className="kicker">Focus raid — everyone here</div>
           <h3>Reply to @{feed.focus.authorHandle}</h3>
           <p>{feed.focus.text}</p>
-          <p className="muted">Same tweet, many replies. That is the pile-on. Other cards are dimmed until this focus ends. Only the CTO lead can move or clear it.</p>
+          <p className="muted">Same tweet, many replies. Other posts cannot be shilled until the CTO lead moves this. After you reply, paste YOUR status URL on the mission.</p>
           <div className="row">
             <button className="btn" disabled={busy} onClick={() => void runShill({
               communityId: getStoredCommunityId(),
@@ -374,7 +373,7 @@ export default function RaidFeedPage() {
               Shill this tweet
             </button>
             <a className="btn secondary" href={feed.focus.url} target="_blank" rel="noreferrer">Open on X</a>
-            {feed.you?.isLead && (
+            {feed.you?.canSteerFocus && (
               <button className="btn secondary" disabled={busy} onClick={() => void stopFocus()}>Clear focus</button>
             )}
           </div>
@@ -553,7 +552,23 @@ export default function RaidFeedPage() {
           )}
           <div className="row">
             <a className="btn" href={post.url} target="_blank" rel="noreferrer">Open on X</a>
-            {post.youShilled ? (
+            {dim ? (
+              <button
+                className="btn secondary"
+                disabled={busy}
+                onClick={() => void runShill({
+                  communityId: getStoredCommunityId(),
+                  postId: feed.focus!.postId
+                }).then((result) => {
+                  setStatus(result.ok
+                    ? "Talk track copied. Reply to the focus tweet, then paste YOUR reply URL on the mission."
+                    : (result.error || "Could not claim this post."));
+                  return load();
+                })}
+              >
+                Shill @{feed.focus?.authorHandle}
+              </button>
+            ) : post.youShilled ? (
               <button className="btn secondary" disabled={busy} onClick={() => void shill(post, true)}>
                 Reshill
               </button>
@@ -562,18 +577,20 @@ export default function RaidFeedPage() {
                 {focused ? "Shill this tweet" : "Shill this"}
               </button>
             )}
-            {connected && !focused && (!feed.focus || feed.you?.isLead) && (
+            {connected && !focused && (!feed.focus || feed.you?.canSteerFocus) && (
               <button className="btn secondary" disabled={busy} onClick={() => void focusRaid(post)}>
                 Everyone here
               </button>
             )}
-            {connected && focused && feed.you?.isLead && (
+            {connected && focused && feed.you?.canSteerFocus && (
               <button className="btn secondary" disabled={busy} onClick={() => void stopFocus()}>
                 Clear focus
               </button>
             )}
             {post.youShilled && <span className="badge ok">Already shilled</span>}
-            {post.missionId && <Link href={`/app/missions/${post.missionId}`}>Mission</Link>}
+            {post.missionId && (
+              <Link href={`/app/missions/${post.missionId}`}>{focused ? "Submit your reply" : "Mission"}</Link>
+            )}
           </div>
         </div>
         );

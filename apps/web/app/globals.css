@@ -193,6 +193,10 @@ label {
   font-size: 13px;
   background: #111114cc;
 }
+.community-banner.raid {
+  border-bottom-color: #f97316;
+  background: #1c1410cc;
+}
 .checkin-list {
   display: flex;
   flex-wrap: wrap;

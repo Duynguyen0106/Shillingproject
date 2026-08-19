@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { FOCUS_RAID_MS, focusChangeAllowed, isFocusLive, serializeFocus } from "./focus";
+import { FOCUS_RAID_MS, focusChangeAllowed, isFocusLive, serializeFocus, shillAllowedDuringFocus } from "./focus";
 
 describe("focus raid", () => {
   it("is live only while the window is open", () => {
@@ -44,6 +44,21 @@ describe("focus raid", () => {
     }).ok).toBe(true);
     expect(focusChangeAllowed({ action: "clear", isLead: false, live: true }).ok).toBe(false);
     expect(focusChangeAllowed({ action: "clear", isLead: true, live: true }).ok).toBe(true);
+    expect(focusChangeAllowed({
+      action: "set",
+      isLead: false,
+      seatVacant: true,
+      live: true,
+      currentPostId: "p1",
+      nextPostId: "p2"
+    }).ok).toBe(true);
+    expect(focusChangeAllowed({ action: "clear", isLead: false, seatVacant: true, live: true }).ok).toBe(true);
+  });
+
+  it("blocks shills on other posts while a focus raid is live", () => {
+    expect(shillAllowedDuringFocus({ live: true, focusPostId: "p1", postId: "p1" }).ok).toBe(true);
+    expect(shillAllowedDuringFocus({ live: true, focusPostId: "p1", postId: "p2" }).ok).toBe(false);
+    expect(shillAllowedDuringFocus({ live: false, focusPostId: "p1", postId: "p2" }).ok).toBe(true);
   });
 
   it("serializes the post everyone should reply to", () => {

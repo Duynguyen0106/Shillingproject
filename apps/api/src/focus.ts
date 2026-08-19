@@ -37,24 +37,39 @@ export function isFocusLive(
   return focusUntil(input.focusAt, windowMs).getTime() >= now;
 }
 
+export function canSteerFocus(input: { isLead: boolean; seatVacant?: boolean }): boolean {
+  return input.isLead || Boolean(input.seatVacant);
+}
+
 export function focusChangeAllowed(input: {
   action: "set" | "clear";
   isLead: boolean;
+  seatVacant?: boolean;
   live: boolean;
   currentPostId?: string | null;
   nextPostId?: string | null;
 }): { ok: true } | { ok: false; error: string } {
+  const steers = canSteerFocus(input);
   if (input.action === "clear") {
     if (!input.live) return { ok: true };
-    if (!input.isLead) return { ok: false, error: "Only the CTO lead can clear the focus raid." };
+    if (!steers) return { ok: false, error: "Only the CTO lead can clear the focus raid." };
     return { ok: true };
   }
   if (!input.live) return { ok: true };
   if (input.nextPostId && input.currentPostId === input.nextPostId) return { ok: true };
-  if (!input.isLead) {
+  if (!steers) {
     return { ok: false, error: "Only the CTO lead can move the focus raid. Keep shilling the current tweet." };
   }
   return { ok: true };
+}
+
+export function shillAllowedDuringFocus(input: {
+  live: boolean;
+  focusPostId?: string | null;
+  postId: string;
+}): { ok: true } | { ok: false; error: string } {
+  if (!input.live || !input.focusPostId || input.focusPostId === input.postId) return { ok: true };
+  return { ok: false, error: "Focus raid is live. Shill that tweet so replies stack in one thread." };
 }
 
 export function serializeFocus(input: {

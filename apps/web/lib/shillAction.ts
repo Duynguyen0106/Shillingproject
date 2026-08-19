@@ -35,6 +35,7 @@ export type ShillResult = {
   liveRaiderCount?: number;
   youShillCount?: number;
   focus?: FocusRaid | null;
+  missionId?: string | null;
 };
 
 export function dispatchFocus(communityId: string, focus: FocusRaid | null) {
@@ -66,15 +67,18 @@ export async function runShill(input: { communityId: string; postId: string; res
     body: JSON.stringify({ wallet, reshill: Boolean(input.reshill) })
   });
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) return { ok: false, error: body.error || "Could not claim this post." };
+  if (!res.ok) {
+    if (body.focus) dispatchFocus(input.communityId, body.focus);
+    return { ok: false, error: body.error || "Could not claim this post.", focus: body.focus ?? null, missionId: body.missionId ?? null };
+  }
   if (body.focus) dispatchFocus(input.communityId, body.focus);
   if (body.alreadyShilled && !input.reshill) {
-    return { ok: true, alreadyShilled: true, kit: body.kit, url: body.url, youShillCount: body.youShillCount, focus: body.focus ?? null };
+    return { ok: true, alreadyShilled: true, kit: body.kit, url: body.url, youShillCount: body.youShillCount, focus: body.focus ?? null, missionId: body.missionId ?? null };
   }
   await applyShillKit(body.kit, body.url);
   notifyOps();
   if (typeof window !== "undefined") {
-    window.dispatchEvent(new CustomEvent(SHILL_EVENT, { detail: { postId: input.postId, reshill: Boolean(input.reshill), kit: body.kit } }));
+    window.dispatchEvent(new CustomEvent(SHILL_EVENT, { detail: { postId: input.postId, reshill: Boolean(input.reshill), kit: body.kit, missionId: body.missionId } }));
   }
   return {
     ok: true,
@@ -84,7 +88,8 @@ export async function runShill(input: { communityId: string; postId: string; res
     url: body.url,
     liveRaiderCount: body.liveRaiderCount,
     youShillCount: body.youShillCount,
-    focus: body.focus ?? null
+    focus: body.focus ?? null,
+    missionId: body.missionId ?? null
   };
 }
 
