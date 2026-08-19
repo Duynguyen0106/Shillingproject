@@ -5,19 +5,40 @@ import { useEffect, useRef, useState } from "react";
 import { API_BASE } from "../lib/config";
 import { getStoredCommunityId } from "../lib/community";
 import { compactCount, dispatchLivePost, type LiveFeedEvent, type LiveKol, type LivePost } from "../lib/liveFeed";
-import { RAID_EVENT, runShill } from "../lib/shillAction";
+import { FOCUS_EVENT, RAID_EVENT, runShill, type FocusRaid } from "../lib/shillAction";
 import { getStoredWallet } from "../lib/session";
 import { useConnectedWallet } from "../lib/useConnectedWallet";
 
-type Toast = LiveFeedEvent & { toastId: string; youShilled?: boolean };
+type Toast = LiveFeedEvent & { toastId: string; youShilled?: boolean; focused?: boolean };
 
 function kolFrom(event: LiveFeedEvent): LiveKol | null {
   return event.kol ?? event.post.kol ?? null;
 }
 
+function toastFromFocus(communityId: string, focus: FocusRaid, youShilled: boolean): Toast {
+  return {
+    type: "post",
+    communityId,
+    toastId: `focus-${focus.postId}`,
+    youShilled,
+    focused: true,
+    kol: null,
+    post: {
+      id: focus.postId,
+      kind: (focus.kind as LivePost["kind"]) || "KOL_POST",
+      url: focus.url,
+      authorHandle: focus.authorHandle,
+      text: focus.text,
+      postedAt: focus.at,
+      createdAt: focus.at
+    }
+  };
+}
+
 export default function LiveFeedToasts() {
   const { connected } = useConnectedWallet();
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [focus, setFocus] = useState<FocusRaid | null>(null);
   const [live, setLive] = useState(false);
   const [busyId, setBusyId] = useState("");
   const [note, setNote] = useState("");
@@ -25,11 +46,23 @@ export default function LiveFeedToasts() {
   const since = useRef<string | null>(null);
   const primed = useRef(false);
   const shilled = useRef(new Set<string>());
+  const focusId = useRef<string | null>(null);
 
   useEffect(() => {
     let closed = false;
     let source: EventSource | null = null;
     let pollTimer = 0;
+
+    function applyFocus(next: FocusRaid | null) {
+      focusId.current = next?.postId ?? null;
+      setFocus(next);
+      if (!next) {
+        setToasts((current) => current.filter((item) => !item.focused));
+        return;
+      }
+      const sticky = toastFromFocus(getStoredCommunityId(), next, shilled.current.has(next.postId));
+      setToasts((current) => [sticky, ...current.filter((item) => !item.focused && item.post.id !== next.postId)].slice(0, 3));
+    }
 
     function pushEvent(event: LiveFeedEvent, popup: boolean) {
       if (closed || event.communityId !== getStoredCommunityId() || seen.current.has(event.post.id)) return;
@@ -37,14 +70,17 @@ export default function LiveFeedToasts() {
       if (event.post.createdAt && (!since.current || event.post.createdAt > since.current)) {
         since.current = event.post.createdAt;
       }
-      if (!popup) return;
       dispatchLivePost(event);
+      if (!popup) return;
+      if (focusId.current && event.post.id !== focusId.current) return;
       const toast: Toast = {
         ...event,
         toastId: `${event.post.id}-${Date.now()}`,
-        youShilled: shilled.current.has(event.post.id)
+        youShilled: shilled.current.has(event.post.id),
+        focused: focusId.current === event.post.id
       };
-      setToasts((current) => [toast, ...current].slice(0, 3));
+      setToasts((current) => [toast, ...current.filter((item) => item.focused)].slice(0, 3));
+      if (toast.focused) return;
       window.setTimeout(() => {
         setToasts((current) => current.filter((item) => item.toastId !== toast.toastId));
       }, 14_000);
@@ -59,7 +95,12 @@ export default function LiveFeedToasts() {
       const qs = params.toString();
       const res = await fetch(`${API_BASE}/communities/${communityId}/feed${qs ? `?${qs}` : ""}`, { cache: "no-store" });
       if (!res.ok) return;
-      const body = await res.json() as { serverTime?: string; posts?: Array<LivePost & { kol?: LiveKol | null; youShilled?: boolean }> };
+      const body = await res.json() as {
+        serverTime?: string;
+        focus?: FocusRaid | null;
+        posts?: Array<LivePost & { kol?: LiveKol | null; youShilled?: boolean }>;
+      };
+      if ((body.focus?.postId ?? null) !== focusId.current) applyFocus(body.focus ?? null);
       if (body.serverTime && !since.current) since.current = body.serverTime;
       for (const post of body.posts ?? []) {
         if (post.youShilled) shilled.current.add(post.id);
@@ -101,6 +142,16 @@ export default function LiveFeedToasts() {
           /* ignore */
         }
       });
+      source.addEventListener("focus", (message) => {
+        try {
+          const event = JSON.parse((message as MessageEvent).data) as { communityId?: string; focus?: FocusRaid | null };
+          if (event.communityId && event.communityId !== getStoredCommunityId()) return;
+          applyFocus(event.focus ?? null);
+          window.dispatchEvent(new CustomEvent(FOCUS_EVENT, { detail: event }));
+        } catch {
+          /* ignore */
+        }
+      });
       source.onerror = () => setLive(false);
     }
 
@@ -114,15 +165,23 @@ export default function LiveFeedToasts() {
       since.current = null;
       primed.current = false;
       shilled.current = new Set();
+      applyFocus(null);
       void pull(false);
       connect();
     };
+    const onFocus = (message: Event) => {
+      const event = (message as CustomEvent<{ communityId?: string; focus?: FocusRaid | null }>).detail;
+      if (event?.communityId && event.communityId !== getStoredCommunityId()) return;
+      applyFocus(event?.focus ?? null);
+    };
     window.addEventListener("shillops-community", onCommunity);
+    window.addEventListener(FOCUS_EVENT, onFocus);
     return () => {
       closed = true;
       source?.close();
       window.clearInterval(pollTimer);
       window.removeEventListener("shillops-community", onCommunity);
+      window.removeEventListener(FOCUS_EVENT, onFocus);
     };
   }, []);
 
@@ -146,7 +205,9 @@ export default function LiveFeedToasts() {
     }
     shilled.current.add(toast.post.id);
     setToasts((current) => current.map((item) => item.post.id === toast.post.id ? { ...item, youShilled: true } : item));
-    setNote("Talk track copied. Reply composer is open.");
+    setNote(toast.focused || focus?.postId === toast.post.id
+      ? "Everyone is on this tweet. Talk track copied — reply here."
+      : "Talk track copied. Reply composer is open.");
   }
 
   return (
@@ -156,8 +217,9 @@ export default function LiveFeedToasts() {
       {toasts.map((toast) => {
         const kol = kolFrom(toast);
         const already = toast.youShilled || shilled.current.has(toast.post.id);
+        const focused = Boolean(toast.focused || (focus && focus.postId === toast.post.id));
         return (
-          <article key={toast.toastId} className="live-toast">
+          <article key={toast.toastId} className={`live-toast${focused ? " focus" : ""}`}>
             {kol?.profileImageUrl
               ? <img src={kol.profileImageUrl} alt="" className="kol-avatar" />
               : <span className="kol-avatar fallback">@{(toast.post.authorHandle || "?").slice(0, 1)}</span>}
@@ -165,12 +227,13 @@ export default function LiveFeedToasts() {
               <div className="row">
                 <strong>@{toast.post.authorHandle}</strong>
                 {kol?.verified && <span className="badge ok">Verified</span>}
-                <span className={`badge ${toast.post.kind === "MENTION" ? "high" : "ok"}`}>
-                  {toast.post.kind === "MENTION" ? "Mention" : "New KOL post"}
+                <span className={`badge ${focused ? "high" : toast.post.kind === "MENTION" ? "high" : "ok"}`}>
+                  {focused ? "Everyone here" : toast.post.kind === "MENTION" ? "Mention" : "New KOL post"}
                 </span>
                 {already && <span className="badge ok">Already shilled</span>}
               </div>
-              {kol && (
+              {focused && <small>Reply this tweet — do not split across other posts.</small>}
+              {kol && !focused && (
                 <small>
                   {kol.displayName ? `${kol.displayName} · ` : ""}
                   {compactCount(kol.followers ?? toast.post.authorFollowers)} followers
@@ -184,7 +247,7 @@ export default function LiveFeedToasts() {
                   </button>
                 ) : (
                   <button className="btn" disabled={busyId === toast.post.id} onClick={() => void shillToast(toast)}>
-                    Shill this
+                    {focused ? "Shill this tweet" : "Shill this"}
                   </button>
                 )}
                 <Link className="btn secondary" href="/app/feed">Feed</Link>

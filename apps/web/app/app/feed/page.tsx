@@ -7,7 +7,7 @@ import { API_BASE } from "../../../lib/config";
 import { getStoredCommunityId } from "../../../lib/community";
 import { LIVE_POST_EVENT, compactCount, type LiveFeedEvent, type LiveKol } from "../../../lib/liveFeed";
 import { authHeaders, getStoredWallet, shortAddress } from "../../../lib/session";
-import { copyText, RAID_EVENT, runShill } from "../../../lib/shillAction";
+import { copyText, FOCUS_EVENT, RAID_EVENT, clearFocus, runFocus, runShill, type FocusRaid } from "../../../lib/shillAction";
 import { useConnectedWallet } from "../../../lib/useConnectedWallet";
 
 type FeedPost = {
@@ -38,6 +38,7 @@ type FeedPost = {
   liveRaiderCount?: number;
   liveRaiders?: Array<{ wallet: string; displayName?: string | null; at: string; you?: boolean }>;
   recentShills?: Array<{ wallet: string; displayName?: string | null; reshill?: boolean; at: string; you?: boolean }>;
+  focused?: boolean;
 };
 
 type ShillHistoryItem = {
@@ -72,6 +73,7 @@ type FeedResponse = {
   contractAddress?: string | null;
   talkTrack?: string | null;
   shillCopy?: string;
+  focus?: FocusRaid | null;
   kols: KolWatch[];
   posts: FeedPost[];
   shillHistory?: ShillHistoryItem[];
@@ -201,6 +203,20 @@ export default function RaidFeedPage() {
     return () => window.removeEventListener(RAID_EVENT, onRaid);
   }, [wallet]);
 
+  useEffect(() => {
+    const onFocus = (message: Event) => {
+      const event = (message as CustomEvent<{ communityId?: string; focus?: FocusRaid | null }>).detail;
+      if (event?.communityId && event.communityId !== getStoredCommunityId()) return;
+      setFeed((current) => current ? {
+        ...current,
+        focus: event?.focus ?? null,
+        posts: current.posts.map((post) => ({ ...post, focused: event?.focus?.postId === post.id }))
+      } : current);
+    };
+    window.addEventListener(FOCUS_EVENT, onFocus);
+    return () => window.removeEventListener(FOCUS_EVENT, onFocus);
+  }, []);
+
   async function addKol() {
     if (!wallet) return;
     setBusy(true);
@@ -266,7 +282,38 @@ export default function RaidFeedPage() {
     }
     setStatus(reshill
       ? "Talk track copied. Reply composer is open — then submit YOUR reply URL as proof."
-      : "Talk track copied. Reply on X, then submit YOUR reply URL as proof.");
+      : result.focus
+        ? "This is the raid. Everyone reply to this tweet. Talk track copied."
+        : "Talk track copied. Reply on X, then submit YOUR reply URL as proof.");
+    await load();
+  }
+
+  async function focusRaid(post: FeedPost) {
+    if (!wallet) {
+      setStatus("Connect a wallet to call the raid.");
+      return;
+    }
+    setBusy(true);
+    const result = await runFocus({ communityId: getStoredCommunityId(), postId: post.id });
+    setBusy(false);
+    if (!result.ok) {
+      setStatus(result.error || "Could not call the focus raid.");
+      return;
+    }
+    setStatus(`Everyone reply to @${post.authorHandle} — do not split across other tweets.`);
+    await load();
+  }
+
+  async function stopFocus() {
+    if (!wallet) return;
+    setBusy(true);
+    const result = await clearFocus(getStoredCommunityId());
+    setBusy(false);
+    if (!result.ok) {
+      setStatus(result.error || "Could not clear the focus raid.");
+      return;
+    }
+    setStatus("Focus raid cleared.");
     await load();
   }
 
@@ -287,7 +334,7 @@ export default function RaidFeedPage() {
       <div className="kicker">Do not hunt on X</div>
       <h1>Raid Feed</h1>
       <p className="muted">
-        New KOL posts pop in live. Shill copies the talk track and opens a reply. Already-shilled posts stay marked — reshill if you want another hit.
+        New KOL posts pop in live. Call a focus raid so the whole room replies under one tweet. Shill copies the talk track and opens that reply. Already-shilled posts stay marked — reshill if you want another hit.
       </p>
       {feed && (
         <div className="row">
@@ -306,6 +353,28 @@ export default function RaidFeedPage() {
           <button className="btn secondary" type="button" onClick={() => void copyText(feed.shillCopy || "").then((ok) => setStatus(ok ? "Talk track copied." : "Copy failed."))}>
             Copy talk track
           </button>
+        </div>
+      )}
+      {feed?.focus && (
+        <div className="card focus-raid">
+          <div className="kicker">Focus raid — everyone here</div>
+          <h3>Reply to @{feed.focus.authorHandle}</h3>
+          <p>{feed.focus.text}</p>
+          <p className="muted">Same tweet, many replies. That is the pile-on. Other cards are dimmed until this focus ends.</p>
+          <div className="row">
+            <button className="btn" disabled={busy} onClick={() => void runShill({
+              communityId: getStoredCommunityId(),
+              postId: feed.focus!.postId
+            }).then((result) => {
+              if (!result.ok) setStatus(result.error || "Could not claim this post.");
+              else setStatus("Everyone is on this tweet. Talk track copied — reply here.");
+              return load();
+            })}>
+              Shill this tweet
+            </button>
+            <a className="btn secondary" href={feed.focus.url} target="_blank" rel="noreferrer">Open on X</a>
+            <button className="btn secondary" disabled={busy} onClick={() => void stopFocus()}>Clear focus</button>
+          </div>
         </div>
       )}
       {feed?.provider === "none" && (
@@ -442,8 +511,10 @@ export default function RaidFeedPage() {
       )}
       {feed?.posts.map((post) => {
         const kol = post.kol ?? feed.kols.find((item) => item.handle === post.authorHandle) ?? null;
+        const focused = Boolean(post.focused || feed.focus?.postId === post.id);
+        const dim = Boolean(feed.focus && !focused);
         return (
-        <div key={post.id} className={`card${post.kind === "MENTION" ? " next-play" : ""}${freshIds.includes(post.id) ? " live-new" : ""}`}>
+        <div key={post.id} className={`card${post.kind === "MENTION" ? " next-play" : ""}${freshIds.includes(post.id) ? " live-new" : ""}${focused ? " focus-raid" : ""}${dim ? " dim" : ""}`}>
           <div className="row">
             {kol?.profileImageUrl
               ? <img src={kol.profileImageUrl} alt="" className="kol-avatar" />
@@ -452,6 +523,7 @@ export default function RaidFeedPage() {
               {post.kind === "MENTION" ? "Mention" : "KOL"}
             </span>
             {freshIds.includes(post.id) && <span className="badge high">New</span>}
+            {focused && <span className="badge high">Everyone here</span>}
             <strong>@{post.authorHandle}</strong>
             {kol?.verified && <span className="badge ok">Verified</span>}
             {typeof (kol?.followers ?? post.authorFollowers) === "number" && (kol?.followers ?? post.authorFollowers ?? 0) > 0 && (
@@ -484,7 +556,17 @@ export default function RaidFeedPage() {
               </button>
             ) : (
               <button className="btn secondary" disabled={busy} onClick={() => void shill(post)}>
-                Shill this
+                {focused ? "Shill this tweet" : "Shill this"}
+              </button>
+            )}
+            {connected && !focused && (
+              <button className="btn secondary" disabled={busy} onClick={() => void focusRaid(post)}>
+                Everyone here
+              </button>
+            )}
+            {connected && focused && (
+              <button className="btn secondary" disabled={busy} onClick={() => void stopFocus()}>
+                Clear focus
               </button>
             )}
             {post.youShilled && <span className="badge ok">Already shilled</span>}

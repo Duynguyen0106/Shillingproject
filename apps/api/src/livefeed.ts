@@ -47,7 +47,22 @@ export type LiveRaidEvent = {
   raiderCount: number;
 };
 
-export type LiveBusEvent = LiveFeedEvent | LiveRaidEvent;
+export type LiveFocusEvent = {
+  type: "focus";
+  communityId: string;
+  focus: {
+    postId: string;
+    url: string;
+    authorHandle: string;
+    text: string;
+    kind?: string | null;
+    at: string;
+    until: string;
+    by: { wallet: string; displayName: string | null } | null;
+  } | null;
+};
+
+export type LiveBusEvent = LiveFeedEvent | LiveRaidEvent | LiveFocusEvent;
 
 type LiveListener = (event: LiveBusEvent) => void;
 
@@ -129,6 +144,10 @@ export function publishLivePost(event: LiveFeedEvent) {
 }
 
 export function publishLiveRaid(event: LiveRaidEvent) {
+  for (const listener of listeners.get(event.communityId) ?? []) listener(event);
+}
+
+export function publishLiveFocus(event: LiveFocusEvent) {
   for (const listener of listeners.get(event.communityId) ?? []) listener(event);
 }
 

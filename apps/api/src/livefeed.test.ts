@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   liveListenerCount,
   postsCreatedSince,
+  publishLiveFocus,
   publishLivePost,
   publishLiveRaid,
   subscribeLiveFeed,
@@ -77,6 +78,28 @@ describe("live raid feed", () => {
       raiderCount: 5
     });
     expect(seen).toEqual([{ postId: "p1", liveRaiderCount: 3 }]);
+    stop();
+  });
+
+  it("pushes a focus raid so the room locks onto one tweet", () => {
+    const seen: Array<string | null> = [];
+    const stop = subscribeLiveFeed("demo-community", (event) => {
+      if (event.type === "focus") seen.push(event.focus?.postId ?? null);
+    });
+    publishLiveFocus({
+      type: "focus",
+      communityId: "demo-community",
+      focus: {
+        postId: "p1",
+        url: "https://x.com/whale/status/1",
+        authorHandle: "whale",
+        text: "gm",
+        at: "2026-08-19T01:00:00.000Z",
+        until: "2026-08-19T03:00:00.000Z",
+        by: { wallet: "0xdemo", displayName: "Raider" }
+      }
+    });
+    expect(seen).toEqual(["p1"]);
     stop();
   });
 

@@ -58,6 +58,7 @@ model User {
   pinnedMissions Mission[] @relation("MissionPins")
   checkIns     MissionCheckIn[]
   feedShills   FeedShill[]
+  focusedCommunities Community[] @relation("CommunityFocusBy")
 }
 
 model Community {
@@ -71,9 +72,14 @@ model Community {
   imageUrl         String?
   xCommunityUrl    String?
   xCommunityId     String?              @unique
+  focusPostId      String?
+  focusAt          DateTime?
+  focusById        String?
   createdAt        DateTime             @default(now())
   updatedAt        DateTime             @updatedAt
   members          CommunityMember[]
+  focusPost        FeedPost?            @relation("CommunityFocus", fields: [focusPostId], references: [id], onDelete: SetNull)
+  focusBy          User?                @relation("CommunityFocusBy", fields: [focusById], references: [id], onDelete: SetNull)
   signals          Signal[]
   missions         Mission[]
   scoreEntries     Score[]
@@ -129,6 +135,7 @@ model FeedPost {
   kolWatch         KolWatch?    @relation(fields: [kolWatchId], references: [id], onDelete: SetNull)
   mission          Mission?     @relation(fields: [missionId], references: [id], onDelete: SetNull)
   shills           FeedShill[]
+  focusedBy        Community[]  @relation("CommunityFocus")
 
   @@unique([communityId, url])
   @@index([communityId, postedAt])

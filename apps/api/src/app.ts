@@ -28,9 +28,10 @@ import {
   type CanonicalToken
 } from "./dexscreener";
 import { ingestNormalizedPost, kolProfileData, parseWatchHandle, refreshAllCommunityFeeds, refreshCommunityFeed } from "./feed";
-import { liveListenerCount, postsCreatedSince, publishLiveRaid, snapshotKol, subscribeLiveFeed } from "./livefeed";
+import { liveListenerCount, postsCreatedSince, publishLiveFocus, publishLiveRaid, snapshotKol, subscribeLiveFeed } from "./livefeed";
 import { attachShillState, serializeShillHistory } from "./shill";
 import { buildShillCopy, buildShillKit, liveRaiderIds, proofIsReplyToRaidTarget } from "./shillkit";
+import { isFocusLive, serializeFocus } from "./focus";
 import { applyFeedFilters, applyKolFilters, attachKolStats, configuredFeedProvider, fetchUserProfile, mentionMatches, parseXHandle, parseXStatusUrl, postHeat } from "./xfeed";
 
 const appUrl = process.env.APP_URL || "http://localhost:3000";
@@ -749,6 +750,54 @@ async function loadTalkTrack(prisma: PrismaClient, communityId: string, missionI
   return pinned?.pinText ?? null;
 }
 
+async function loadFocusPayload(
+  prisma: PrismaClient,
+  community: { id: string; focusPostId?: string | null; focusAt?: Date | string | null; focusById?: string | null },
+  posts: Array<{ id: string; url: string; authorHandle: string; text?: string | null; kind?: string | null }>
+) {
+  if (!isFocusLive(community)) return null;
+  let post = posts.find((item) => item.id === community.focusPostId) ?? null;
+  if (!post && community.focusPostId) {
+    post = await prisma.feedPost?.findUnique?.({
+      where: { id: community.focusPostId },
+      select: { id: true, url: true, authorHandle: true, text: true, kind: true }
+    }) ?? null;
+  }
+  const by = community.focusById
+    ? await prisma.user?.findUnique?.({
+      where: { id: community.focusById },
+      select: { wallet: true, displayName: true }
+    }) ?? null
+    : null;
+  return serializeFocus({
+    focusPostId: community.focusPostId,
+    focusAt: community.focusAt,
+    post,
+    by
+  });
+}
+
+async function setFocusRaid(
+  prisma: PrismaClient,
+  communityId: string,
+  post: { id: string; url: string; authorHandle: string; text?: string | null; kind?: string | null },
+  user: { id: string; wallet: string; displayName?: string | null }
+) {
+  const focusAt = new Date();
+  await prisma.community?.update?.({
+    where: { id: communityId },
+    data: { focusPostId: post.id, focusAt, focusById: user.id }
+  });
+  const focus = serializeFocus({
+    focusPostId: post.id,
+    focusAt,
+    post,
+    by: { wallet: user.wallet, displayName: user.displayName ?? null }
+  });
+  publishLiveFocus({ type: "focus", communityId, focus });
+  return focus;
+}
+
 async function promoteLead(prisma: PrismaClient, communityId: string, userId: string) {
   await prisma.communityMember.updateMany({
     where: { communityId, role: "lead" },
@@ -1208,6 +1257,7 @@ export function createApp(prisma: PrismaClient) {
         : { id: item.feedPostId }
     }));
     const talkTrack = pinned?.pinText ?? null;
+    const focus = await loadFocusPayload(prisma, community, rawPosts);
     res.json({
       provider: configuredFeedProvider(),
       ticker: community.ticker,
@@ -1218,11 +1268,12 @@ export function createApp(prisma: PrismaClient) {
         contractAddress: community.contractAddress,
         pinText: talkTrack
       }),
+      focus,
       filters,
       serverTime: new Date().toISOString(),
       live: true,
       kols,
-      posts,
+      posts: posts.map((post) => ({ ...post, focused: focus?.postId === post.id })),
       shillHistory
     });
   }));
@@ -1395,7 +1446,8 @@ export function createApp(prisma: PrismaClient) {
         url: post.url,
         missionId: post.missionId,
         claimed: true,
-        kit
+        kit,
+        focus: await loadFocusPayload(prisma, community, [post])
       });
     }
     let missionId = post.missionId;
@@ -1448,6 +1500,9 @@ export function createApp(prisma: PrismaClient) {
       raiderCount
     });
     await touchMemberActivity(prisma, user.id, community.id);
+    const focus = prior === 0 && !isFocusLive(community)
+      ? await setFocusRaid(prisma, community.id, post, user)
+      : await loadFocusPayload(prisma, community, [post]);
     res.json({
       url: post.url,
       missionId: mission.id,
@@ -1458,9 +1513,51 @@ export function createApp(prisma: PrismaClient) {
       liveRaiderCount,
       raiderCount,
       kit,
+      focus,
       shill,
       shortLink
     });
+  }));
+
+  app.post("/communities/:id/feed/:postId/focus", asyncRoute(async (req, res) => {
+    const { wallet: bodyWallet } = claimSchema.parse(req.body ?? {});
+    const wallet = resolveActorWallet(req, bodyWallet);
+    if (!wallet) return res.status(401).json({ error: "Connect a wallet and sign in first" });
+    const post = await prisma.feedPost.findUnique({ where: { id: req.params.postId } });
+    if (!post || post.communityId !== req.params.id) return res.status(404).json({ error: "Post not found" });
+    const community = await prisma.community.findUnique({ where: { id: req.params.id } });
+    if (!community) return res.status(404).json({ error: "Community not found" });
+    let user = await prisma.user.findUnique({ where: { wallet } });
+    if (!user) user = await prisma.user.create({ data: { wallet } });
+    const member = await prisma.communityMember.findUnique({
+      where: { userId_communityId: { userId: user.id, communityId: community.id } }
+    });
+    if (!member) return res.status(403).json({ error: "Join this mint before calling a focus raid" });
+    const focus = await setFocusRaid(prisma, community.id, post, user);
+    await touchMemberActivity(prisma, user.id, community.id);
+    res.json({ focus, url: post.url });
+  }));
+
+  app.post("/communities/:id/feed/focus/clear", asyncRoute(async (req, res) => {
+    const { wallet: bodyWallet } = claimSchema.parse(req.body ?? {});
+    const wallet = resolveActorWallet(req, bodyWallet);
+    if (!wallet) return res.status(401).json({ error: "Connect a wallet and sign in first" });
+    const community = await prisma.community.findUnique({ where: { id: req.params.id } });
+    if (!community) return res.status(404).json({ error: "Community not found" });
+    const user = await prisma.user.findUnique({ where: { wallet } });
+    const member = user
+      ? await prisma.communityMember.findUnique({
+        where: { userId_communityId: { userId: user.id, communityId: community.id } }
+      })
+      : null;
+    if (!member) return res.status(403).json({ error: "Join this mint before clearing the focus raid" });
+    await prisma.community?.update?.({
+      where: { id: community.id },
+      data: { focusPostId: null, focusAt: null, focusById: null }
+    });
+    publishLiveFocus({ type: "focus", communityId: community.id, focus: null });
+    if (user) await touchMemberActivity(prisma, user.id, community.id);
+    res.json({ focus: null, cleared: true });
   }));
 
   app.post("/signals/ingest", asyncRoute(async (req, res) => {

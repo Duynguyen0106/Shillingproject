@@ -282,6 +282,17 @@ label {
   border-color: #f97316;
   animation: live-in 220ms ease-out;
 }
+.card.focus-raid {
+  border-color: #f97316;
+  box-shadow: 0 0 0 1px #f9731666;
+}
+.card.dim {
+  opacity: 0.42;
+}
+.live-toast.focus {
+  border-color: #fb923c;
+  background: #1c1410;
+}
 .live-dot {
   display: inline-flex;
   min-width: 18px;

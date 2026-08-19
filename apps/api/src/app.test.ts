@@ -1525,10 +1525,37 @@ describe("raid feed", () => {
     expect(res.body.shillCopy).toContain("$PEPE");
   });
 
+  it("marks the focused post so the room replies to one tweet", async () => {
+    const app = createApp({
+      community: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "demo-community",
+          ticker: "PEPE",
+          focusPostId: "p1",
+          focusAt: new Date(),
+          focusById: "u1"
+        })
+      },
+      feedPost: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: "p1", authorHandle: "whale", kind: "KOL_POST", postedAt: new Date(), url: "https://x.com/whale/status/1", text: "gm" },
+          { id: "p2", authorHandle: "other", kind: "KOL_POST", postedAt: new Date(), url: "https://x.com/other/status/2", text: "later" }
+        ])
+      },
+      kolWatch: { findMany: vi.fn().mockResolvedValue([]) },
+      user: { findUnique: vi.fn().mockResolvedValue({ wallet: "0xlead", displayName: "Lead" }) }
+    } as never);
+    const res = await request(app).get("/communities/demo-community/feed");
+    expect(res.status).toBe(200);
+    expect(res.body.focus.postId).toBe("p1");
+    expect(res.body.posts.find((post: { id: string }) => post.id === "p1").focused).toBe(true);
+    expect(res.body.posts.find((post: { id: string }) => post.id === "p2").focused).toBe(false);
+  });
+
   it("records a first shill and refuses a duplicate unless reshill is set", async () => {
     const createShill = vi.fn().mockResolvedValue({ id: "s1" });
     const app = createApp({
-      community: { findUnique: vi.fn().mockResolvedValue({ id: "demo-community", ticker: "PEPE" }) },
+      community: { findUnique: vi.fn().mockResolvedValue({ id: "demo-community", ticker: "PEPE" }), update: vi.fn() },
       feedPost: { findUnique: vi.fn().mockResolvedValue({ id: "p1", communityId: "demo-community", url: "https://x.com/whale/status/1", kind: "KOL_POST", missionId: "m1", authorHandle: "whale", text: "gm" }) },
       user: { findUnique: vi.fn().mockResolvedValue({ id: "u1", wallet: "0xdemo" }) },
       communityMember: {
@@ -1555,6 +1582,7 @@ describe("raid feed", () => {
     expect(first.body.alreadyShilled).toBe(false);
     expect(first.body.kit.copy).toContain("$PEPE");
     expect(first.body.kit.intentUrl).toContain("in_reply_to=1");
+    expect(first.body.focus.postId).toBe("p1");
     expect(createShill).toHaveBeenCalledTimes(1);
 
     const dup = await request(app).post("/communities/demo-community/feed/p1/shill").send({ wallet: "0xdemo" });
@@ -1567,5 +1595,86 @@ describe("raid feed", () => {
     expect(again.status).toBe(200);
     expect(again.body.reshill).toBe(true);
     expect(createShill).toHaveBeenCalledTimes(2);
+  });
+
+  it("lets a member call a focus raid so everyone replies to the same post", async () => {
+    const update = vi.fn();
+    const app = createApp({
+      community: { findUnique: vi.fn().mockResolvedValue({ id: "demo-community", ticker: "PEPE" }), update },
+      feedPost: { findUnique: vi.fn().mockResolvedValue({ id: "p2", communityId: "demo-community", url: "https://x.com/whale/status/2", authorHandle: "whale", text: "now", kind: "KOL_POST" }) },
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "u1", wallet: "0xdemo", displayName: "Raider" }) },
+      communityMember: {
+        findUnique: vi.fn().mockResolvedValue({ id: "mem1", userId: "u1", communityId: "demo-community" }),
+        updateMany: vi.fn()
+      }
+    } as never);
+    const seen: Array<string | null> = [];
+    const stop = subscribeLiveFeed("demo-community", (event) => {
+      if (event.type === "focus") seen.push(event.focus?.postId ?? null);
+    });
+    const res = await request(app).post("/communities/demo-community/feed/p2/focus").send({ wallet: "0xdemo" });
+    stop();
+    expect(res.status).toBe(200);
+    expect(res.body.focus.postId).toBe("p2");
+    expect(res.body.focus.authorHandle).toBe("whale");
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(seen).toEqual(["p2"]);
+  });
+
+  it("keeps an existing focus when someone shills a different post", async () => {
+    const update = vi.fn();
+    const app = createApp({
+      community: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "demo-community",
+          ticker: "PEPE",
+          focusPostId: "p1",
+          focusAt: new Date(),
+          focusById: "u2"
+        }),
+        update
+      },
+      feedPost: {
+        findUnique: vi.fn().mockImplementation(({ where }: { where: { id: string } }) => {
+          if (where.id === "p1") {
+            return Promise.resolve({
+              id: "p1",
+              communityId: "demo-community",
+              url: "https://x.com/whale/status/1",
+              kind: "KOL_POST",
+              authorHandle: "whale",
+              text: "gm"
+            });
+          }
+          return Promise.resolve({
+            id: "p2",
+            communityId: "demo-community",
+            url: "https://x.com/other/status/2",
+            kind: "KOL_POST",
+            missionId: "m1",
+            authorHandle: "other",
+            text: "nope"
+          });
+        })
+      },
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "u1", wallet: "0xdemo" }) },
+      communityMember: {
+        findUnique: vi.fn().mockResolvedValue({ id: "mem1", userId: "u1", communityId: "demo-community" }),
+        updateMany: vi.fn()
+      },
+      mission: { findUnique: vi.fn().mockResolvedValue({ id: "m1", communityId: "demo-community" }) },
+      missionClaim: { upsert: vi.fn() },
+      missionCheckIn: { upsert: vi.fn() },
+      shortLink: { findFirst: vi.fn().mockResolvedValue({ id: "l1", code: "abc", targetUrl: "https://x.com", missionId: "m1", _count: { clicks: 0 } }) },
+      feedShill: {
+        count: vi.fn().mockResolvedValue(0),
+        findMany: vi.fn().mockResolvedValue([]),
+        create: vi.fn().mockResolvedValue({ id: "s2" })
+      }
+    } as never);
+    const res = await request(app).post("/communities/demo-community/feed/p2/shill").send({ wallet: "0xdemo" });
+    expect(res.status).toBe(200);
+    expect(update).not.toHaveBeenCalled();
+    expect(res.body.focus.postId).toBe("p1");
   });
 });
