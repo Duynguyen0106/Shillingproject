@@ -27,8 +27,8 @@ import {
   tokenTrustSignals,
   type CanonicalToken
 } from "./dexscreener";
-import { ingestNormalizedPost, parseWatchHandle, refreshAllCommunityFeeds, refreshCommunityFeed } from "./feed";
-import { configuredFeedProvider, mentionMatches, parseXHandle, parseXStatusUrl } from "./xfeed";
+import { ingestNormalizedPost, kolProfileData, parseWatchHandle, refreshAllCommunityFeeds, refreshCommunityFeed } from "./feed";
+import { applyFeedFilters, applyKolFilters, attachKolStats, configuredFeedProvider, fetchUserProfile, mentionMatches, parseXHandle, parseXStatusUrl, postHeat } from "./xfeed";
 
 const appUrl = process.env.APP_URL || "http://localhost:3000";
 const sessions = new Map<string, { wallet: string }>();
@@ -111,6 +111,15 @@ const xCommunitySchema = z.object({
 const kolWatchSchema = z.object({
   wallet: z.string().min(3).optional(),
   handle: z.string().min(1)
+});
+
+const feedQuerySchema = z.object({
+  handle: z.string().optional(),
+  q: z.string().optional(),
+  kind: z.enum(["KOL_POST", "MENTION"]).optional(),
+  minFollowers: z.coerce.number().int().min(0).optional(),
+  minEngagement: z.coerce.number().int().min(0).optional(),
+  sort: z.enum(["new", "hot"]).optional()
 });
 
 const feedPostSchema = z.object({
@@ -1103,22 +1112,37 @@ export function createApp(prisma: PrismaClient) {
   app.get("/communities/:id/feed", asyncRoute(async (req, res) => {
     const community = await prisma.community.findUnique({ where: { id: req.params.id } });
     if (!community) return res.status(404).json({ error: "Community not found" });
-    const [posts, kols] = await Promise.all([
+    const filters = feedQuerySchema.parse({
+      handle: typeof req.query.handle === "string" && req.query.handle ? req.query.handle : undefined,
+      q: typeof req.query.q === "string" && req.query.q ? req.query.q : undefined,
+      kind: req.query.kind === "KOL_POST" || req.query.kind === "MENTION" ? req.query.kind : undefined,
+      minFollowers: req.query.minFollowers ? Number(req.query.minFollowers) : undefined,
+      minEngagement: req.query.minEngagement ? Number(req.query.minEngagement) : undefined,
+      sort: req.query.sort === "hot" || req.query.sort === "new" ? req.query.sort : undefined
+    });
+    const [rawPosts, rawKols] = await Promise.all([
       prisma.feedPost?.findMany?.({
         where: { communityId: community.id },
         orderBy: { postedAt: "desc" },
-        take: 50,
-        include: { mission: { select: { id: true, status: true, title: true } } }
+        take: 120,
+        include: { mission: { select: { id: true, status: true, title: true } }, kolWatch: true }
       }) ?? [],
       prisma.kolWatch?.findMany?.({
         where: { communityId: community.id },
-        orderBy: { createdAt: "asc" }
+        include: { _count: { select: { posts: true } } }
       }) ?? []
     ]);
+    const posts = applyFeedFilters(rawPosts, filters).slice(0, 50).map((post) => ({
+      ...post,
+      heat: postHeat(post)
+    }));
+    const kols = applyKolFilters(attachKolStats(rawKols, rawPosts), filters)
+      .sort((a, b) => (b.followers ?? -1) - (a.followers ?? -1));
     res.json({
       provider: configuredFeedProvider(),
       ticker: community.ticker,
       contractAddress: community.contractAddress,
+      filters,
       kols,
       posts
     });
@@ -1136,10 +1160,15 @@ export function createApp(prisma: PrismaClient) {
     }
     const handle = parseWatchHandle(rawHandle);
     if (!handle) return res.status(400).json({ error: "Use an X handle like @username" });
+    const profile = await fetchUserProfile(handle).catch(() => null);
     const watch = await prisma.kolWatch.upsert({
       where: { communityId_handle: { communityId: community.id, handle } },
-      update: {},
-      create: { communityId: community.id, handle }
+      update: profile ? kolProfileData(profile) : {},
+      create: {
+        communityId: community.id,
+        handle,
+        ...(profile ? kolProfileData(profile) : {})
+      }
     });
     const user = await prisma.user.findUnique({ where: { wallet } });
     if (user) await touchMemberActivity(prisma, user.id, community.id);

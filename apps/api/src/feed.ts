@@ -3,8 +3,10 @@ import {
   configuredFeedProvider,
   fetchHandleTweets,
   fetchMentionTweets,
+  fetchUserProfile,
   mentionMatches,
   parseXHandle,
+  type NormalizedKol,
   type NormalizedPost
 } from "./xfeed";
 
@@ -24,6 +26,34 @@ export type FeedHooks = {
   }) => Promise<string | null>;
 };
 
+function postMetrics(post: NormalizedPost) {
+  return {
+    authorName: post.authorName,
+    authorFollowers: post.authorFollowers ?? 0,
+    likeCount: post.likeCount ?? 0,
+    replyCount: post.replyCount ?? 0,
+    retweetCount: post.retweetCount ?? 0,
+    quoteCount: post.quoteCount ?? 0,
+    viewCount: post.viewCount ?? 0,
+    text: post.text.slice(0, 2000),
+    postedAt: post.postedAt
+  };
+}
+
+function kolProfileData(profile: NormalizedKol) {
+  return {
+    displayName: profile.displayName,
+    xUserId: profile.xUserId,
+    bio: profile.bio,
+    profileImageUrl: profile.profileImageUrl,
+    followers: profile.followers,
+    following: profile.following,
+    statusesCount: profile.statusesCount,
+    verified: profile.verified ?? false,
+    lastFetchedAt: new Date()
+  };
+}
+
 export async function ingestNormalizedPost(
   prisma: PrismaClient,
   community: { id: string; ticker: string; contractAddress: string | null },
@@ -34,7 +64,13 @@ export async function ingestNormalizedPost(
   const existing = await prisma.feedPost.findUnique({
     where: { communityId_url: { communityId: community.id, url: post.url } }
   });
-  if (existing) return { post: existing, created: false as const };
+  if (existing) {
+    const updated = await prisma.feedPost.update({
+      where: { id: existing.id },
+      data: postMetrics(post)
+    });
+    return { post: updated, created: false as const };
+  }
   const created = await prisma.feedPost.create({
     data: {
       communityId: community.id,
@@ -42,9 +78,7 @@ export async function ingestNormalizedPost(
       kind,
       url: post.url,
       authorHandle: post.authorHandle,
-      authorName: post.authorName,
-      text: post.text.slice(0, 2000),
-      postedAt: post.postedAt
+      ...postMetrics(post)
     }
   });
   return { post: created, created: true as const };
@@ -69,10 +103,14 @@ export async function refreshCommunityFeed(prisma: PrismaClient, communityId: st
   let added = 0;
   let mentions = 0;
   for (const watch of community.kolWatches.slice(0, 8)) {
+    const profile = await fetchUserProfile(watch.handle).catch(() => null);
     const tweets = await fetchHandleTweets(watch.handle);
     await prisma.kolWatch.update({
       where: { id: watch.id },
-      data: { lastFetchedAt: new Date(), xUserId: tweets[0]?.authorId ?? watch.xUserId }
+      data: {
+        ...(profile ? kolProfileData(profile) : { lastFetchedAt: new Date() }),
+        xUserId: profile?.xUserId ?? tweets[0]?.authorId ?? watch.xUserId
+      }
     });
     for (const tweet of tweets) {
       const isMention = mentionMatches(tweet.text, community.ticker, community.contractAddress);
@@ -134,3 +172,5 @@ export async function refreshAllCommunityFeeds(prisma: PrismaClient, hooks?: Fee
 export function parseWatchHandle(input: string): string | null {
   return parseXHandle(input);
 }
+
+export { kolProfileData };

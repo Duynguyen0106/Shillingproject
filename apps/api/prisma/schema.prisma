@@ -85,38 +85,51 @@ model Community {
 }
 
 model KolWatch {
-  id            String    @id @default(cuid())
-  communityId   String
-  handle        String
-  displayName   String?
-  xUserId       String?
-  createdAt     DateTime  @default(now())
-  lastFetchedAt DateTime?
-  community     Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
-  posts         FeedPost[]
+  id               String    @id @default(cuid())
+  communityId      String
+  handle           String
+  displayName      String?
+  xUserId          String?
+  bio              String?
+  profileImageUrl  String?
+  followers        Int?
+  following        Int?
+  statusesCount    Int?
+  verified         Boolean   @default(false)
+  createdAt        DateTime  @default(now())
+  lastFetchedAt    DateTime?
+  community        Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  posts            FeedPost[]
 
   @@unique([communityId, handle])
 }
 
 model FeedPost {
-  id            String       @id @default(cuid())
-  communityId   String
-  kolWatchId    String?
-  kind          FeedPostKind
-  url           String
-  authorHandle  String
-  authorName    String?
-  text          String
-  postedAt      DateTime
-  notifiedAt    DateTime?
-  missionId     String?
-  createdAt     DateTime     @default(now())
-  community     Community    @relation(fields: [communityId], references: [id], onDelete: Cascade)
-  kolWatch      KolWatch?    @relation(fields: [kolWatchId], references: [id], onDelete: SetNull)
-  mission       Mission?     @relation(fields: [missionId], references: [id], onDelete: SetNull)
+  id               String       @id @default(cuid())
+  communityId      String
+  kolWatchId       String?
+  kind             FeedPostKind
+  url              String
+  authorHandle     String
+  authorName       String?
+  authorFollowers  Int          @default(0)
+  text             String
+  likeCount        Int          @default(0)
+  replyCount       Int          @default(0)
+  retweetCount     Int          @default(0)
+  quoteCount       Int          @default(0)
+  viewCount        Int          @default(0)
+  postedAt         DateTime
+  notifiedAt       DateTime?
+  missionId        String?
+  createdAt        DateTime     @default(now())
+  community        Community    @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  kolWatch         KolWatch?    @relation(fields: [kolWatchId], references: [id], onDelete: SetNull)
+  mission          Mission?     @relation(fields: [missionId], references: [id], onDelete: SetNull)
 
   @@unique([communityId, url])
   @@index([communityId, postedAt])
+  @@index([communityId, authorHandle])
 }
 
 model CommunityMember {

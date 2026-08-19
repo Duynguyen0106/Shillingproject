@@ -15,7 +15,7 @@
 - POST `/communities/:id/x-community` `{ url, wallet? }` — active CTO lead binds an `x.com/i/communities/{id}` URL to this mint (unique). Shown on the token hub. Does not replace DexScreener contract identity.
 
 ## Raid feed
-- GET `/communities/:id/feed` — watched KOL handles plus latest KOL posts and ticker/CA mentions. `provider` is `twitterapi.io`, `x`, or `none`.
+- GET `/communities/:id/feed` — watched KOL handles plus latest KOL posts and ticker/CA mentions. Query: `handle` (one KOL), `q` (search handle/name), `kind=KOL_POST|MENTION`, `minFollowers`, `minEngagement` (likes+replies+reposts+quotes), `sort=new|hot`. `minFollowers` / `minEngagement` / `q` also filter the watched KOL list. Each KOL includes bio, avatar, verified, followers/following, tweet count, and `stats` (post count + interaction heat). Each post includes likes/replies/reposts/quotes/views.
 - POST `/communities/:id/kols` `{ handle, wallet? }` — CTO lead watches an X handle
 - DELETE `/communities/:id/kols/:handle` — CTO lead removes a watch
 - POST `/communities/:id/feed/refresh` — joined member pulls live posts (requires `TWITTERAPI_IO_KEY` or `X_BEARER_TOKEN`). Mentions of the ticker or CA notify Telegram/Discord and open a raid.

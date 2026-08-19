@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import ConnectWalletButton from "../../ConnectWalletButton";
 import { API_BASE } from "../../../lib/config";
@@ -14,7 +14,14 @@ type FeedPost = {
   url: string;
   authorHandle: string;
   authorName?: string | null;
+  authorFollowers?: number;
   text: string;
+  likeCount?: number;
+  replyCount?: number;
+  retweetCount?: number;
+  quoteCount?: number;
+  viewCount?: number;
+  heat?: number;
   postedAt: string;
   missionId?: string | null;
   mission?: { id: string; status: string; title: string } | null;
@@ -23,7 +30,16 @@ type FeedPost = {
 type KolWatch = {
   id: string;
   handle: string;
+  displayName?: string | null;
+  bio?: string | null;
+  profileImageUrl?: string | null;
+  followers?: number | null;
+  following?: number | null;
+  statusesCount?: number | null;
+  verified?: boolean;
   lastFetchedAt?: string | null;
+  _count?: { posts: number };
+  stats?: { posts: number; heat: number; lastHeat: number; lastPostedAt?: string | null };
 };
 
 type FeedResponse = {
@@ -42,17 +58,36 @@ function timeAgo(value: string): string {
   return `${Math.floor(ms / 86_400_000)}d ago`;
 }
 
+function compact(value?: number | null): string {
+  const n = value ?? 0;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
 export default function RaidFeedPage() {
   const { connected, wallet } = useConnectedWallet();
   const [feed, setFeed] = useState<FeedResponse | null>(null);
   const [handle, setHandle] = useState("");
   const [status, setStatus] = useState("");
-  const [filter, setFilter] = useState<"all" | "KOL_POST" | "MENTION">("all");
+  const [kind, setKind] = useState<"all" | "KOL_POST" | "MENTION">("all");
+  const [kolFilter, setKolFilter] = useState("");
+  const [kolQuery, setKolQuery] = useState("");
+  const [minFollowers, setMinFollowers] = useState(0);
+  const [minEngagement, setMinEngagement] = useState(0);
+  const [sort, setSort] = useState<"new" | "hot">("new");
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     const communityId = getStoredCommunityId();
-    const res = await fetch(`${API_BASE}/communities/${communityId}/feed`, { cache: "no-store" });
+    const params = new URLSearchParams();
+    if (kind !== "all") params.set("kind", kind);
+    if (kolFilter) params.set("handle", kolFilter);
+    if (minFollowers) params.set("minFollowers", String(minFollowers));
+    if (minEngagement) params.set("minEngagement", String(minEngagement));
+    if (sort !== "new") params.set("sort", sort);
+    const qs = params.toString();
+    const res = await fetch(`${API_BASE}/communities/${communityId}/feed${qs ? `?${qs}` : ""}`, { cache: "no-store" });
     if (!res.ok) {
       setFeed(null);
       setStatus("Bind a mint first, then open the raid feed.");
@@ -60,7 +95,7 @@ export default function RaidFeedPage() {
     }
     setFeed(await res.json());
     setStatus("");
-  }, []);
+  }, [kind, kolFilter, minFollowers, minEngagement, sort]);
 
   useEffect(() => {
     void load();
@@ -87,7 +122,7 @@ export default function RaidFeedPage() {
       return;
     }
     setHandle("");
-    setStatus(`Watching @${body.watch.handle}`);
+    setStatus(`Watching @${body.watch.handle}${body.watch.followers ? ` · ${compact(body.watch.followers)} followers` : ""}`);
     await load();
   }
 
@@ -137,14 +172,24 @@ export default function RaidFeedPage() {
     await load();
   }
 
-  const posts = (feed?.posts ?? []).filter((post) => filter === "all" || post.kind === filter);
+  const selectedKol = useMemo(
+    () => feed?.kols.find((kol) => kol.handle === kolFilter) ?? null,
+    [feed?.kols, kolFilter]
+  );
+  const visibleKols = useMemo(() => {
+    const q = kolQuery.replace(/^@/, "").toLowerCase().trim();
+    if (!q) return feed?.kols ?? [];
+    return (feed?.kols ?? []).filter(
+      (kol) => kol.handle.toLowerCase().includes(q) || (kol.displayName || "").toLowerCase().includes(q)
+    );
+  }, [feed?.kols, kolQuery]);
 
   return (
     <main className="container">
       <div className="kicker">Do not hunt on X</div>
       <h1>Raid Feed</h1>
       <p className="muted">
-        Click a post to shill it. KOL timelines and ticker/CA mentions land here. Mentions notify Telegram/Discord so the whole room piles on.
+        Filter KOLs by followers and post interaction, then click a post to shill it. Mentions of the ticker or CA still notify the whole room.
       </p>
       {feed && (
         <div className="row">
@@ -158,20 +203,50 @@ export default function RaidFeedPage() {
       {feed?.provider === "none" && (
         <div className="card">
           <p>
-            Set <code>TWITTERAPI_IO_KEY</code> or <code>X_BEARER_TOKEN</code> on the API so this feed pulls by itself.
-            Until then the lead can watch KOL handles and the poller will start on next boot.
+            Set <code>TWITTERAPI_IO_KEY</code> or <code>X_BEARER_TOKEN</code> to refresh followers, bios, and likes automatically.
           </p>
         </div>
       )}
       <div className="card">
         <h3>Watched KOLs</h3>
-        <p className="muted">CTO lead adds handles. The app pulls their posts so raiders do not search X.</p>
-        {(feed?.kols.length ?? 0) === 0 && <p className="muted">No KOLs watched yet.</p>}
+        <p className="muted">Members search and filter this list. Tap a card to show only that KOL. Only the CTO lead adds handles.</p>
         <div className="row">
-          {feed?.kols.map((kol) => (
-            <span key={kol.id} className="badge">@{kol.handle}</span>
+          <input
+            value={kolQuery}
+            onChange={(e) => setKolQuery(e.target.value)}
+            placeholder="Search handle or name"
+            style={{ maxWidth: 240 }}
+          />
+        </div>
+        {(visibleKols.length ?? 0) === 0 && <p className="muted">No KOLs match these filters.</p>}
+        <div className="kol-grid">
+          {visibleKols.map((kol) => (
+            <button
+              key={kol.id}
+              type="button"
+              className={`kol-card${kolFilter === kol.handle ? " selected" : ""}`}
+              onClick={() => setKolFilter(kolFilter === kol.handle ? "" : kol.handle)}
+            >
+              {kol.profileImageUrl
+                ? <img src={kol.profileImageUrl} alt="" className="kol-avatar" />
+                : <span className="kol-avatar fallback">@{kol.handle.slice(0, 1)}</span>}
+              <span>
+                <strong>@{kol.handle}</strong>
+                {kol.verified && <span className="badge ok">Verified</span>}
+                {kol.displayName && <small>{kol.displayName}</small>}
+                <small>{compact(kol.followers)} followers · {compact(kol.following)} following</small>
+                <small>{compact(kol.stats?.heat ?? 0)} interaction · {kol.stats?.posts ?? kol._count?.posts ?? 0} posts</small>
+              </span>
+            </button>
           ))}
         </div>
+        {selectedKol && (
+          <p className="muted">
+            {selectedKol.bio || `@${selectedKol.handle}`}
+            {typeof selectedKol.statusesCount === "number" ? ` · ${compact(selectedKol.statusesCount)} tweets` : ""}
+            {selectedKol.stats?.lastHeat ? ` · last post ${compact(selectedKol.stats.lastHeat)} interaction` : ""}
+          </p>
+        )}
         {connected ? (
           <div className="row" style={{ marginTop: 12 }}>
             <input
@@ -187,26 +262,76 @@ export default function RaidFeedPage() {
           <ConnectWalletButton />
         )}
       </div>
-      <div className="row">
-        <button className={`btn secondary`} type="button" onClick={() => setFilter("all")}>All</button>
-        <button className="btn secondary" type="button" onClick={() => setFilter("KOL_POST")}>KOL posts</button>
-        <button className="btn secondary" type="button" onClick={() => setFilter("MENTION")}>Mentions</button>
+      <div className="card">
+        <h3>Filter KOLs and posts</h3>
+        <div className="row">
+          <button className="btn secondary" type="button" onClick={() => setKind("all")}>All</button>
+          <button className="btn secondary" type="button" onClick={() => setKind("KOL_POST")}>KOL posts</button>
+          <button className="btn secondary" type="button" onClick={() => setKind("MENTION")}>Mentions</button>
+          <label>
+            Min followers
+            <select value={minFollowers} onChange={(e) => setMinFollowers(Number(e.target.value))}>
+              <option value={0}>Any</option>
+              <option value={10000}>10k+</option>
+              <option value={50000}>50k+</option>
+              <option value={100000}>100k+</option>
+              <option value={500000}>500k+</option>
+            </select>
+          </label>
+          <label>
+            Min interaction
+            <select value={minEngagement} onChange={(e) => setMinEngagement(Number(e.target.value))}>
+              <option value={0}>Any</option>
+              <option value={50}>50+</option>
+              <option value={200}>200+</option>
+              <option value={1000}>1k+</option>
+              <option value={5000}>5k+</option>
+            </select>
+          </label>
+          <label>
+            Sort
+            <select value={sort} onChange={(e) => setSort(e.target.value as "new" | "hot")}>
+              <option value="new">Newest</option>
+              <option value="hot">Most interaction</option>
+            </select>
+          </label>
+          <button
+            className="btn secondary"
+            type="button"
+            onClick={() => {
+              setKind("all");
+              setKolFilter("");
+              setKolQuery("");
+              setMinFollowers(0);
+              setMinEngagement(0);
+              setSort("new");
+            }}
+          >
+            Clear
+          </button>
+        </div>
       </div>
-      {posts.length === 0 && (
+      {(feed?.posts.length ?? 0) === 0 && (
         <div className="card">
-          <p>No posts in the feed yet. Watch KOLs and pull live, or wait for a ticker/CA mention.</p>
+          <p>No posts match these filters. Watch KOLs, pull live, or loosen followers/interaction.</p>
         </div>
       )}
-      {posts.map((post) => (
+      {feed?.posts.map((post) => (
         <div key={post.id} className={`card${post.kind === "MENTION" ? " next-play" : ""}`}>
           <div className="row">
             <span className={`badge ${post.kind === "MENTION" ? "high" : "ok"}`}>
               {post.kind === "MENTION" ? "Mention" : "KOL"}
             </span>
             <strong>@{post.authorHandle}</strong>
+            {typeof post.authorFollowers === "number" && post.authorFollowers > 0 && (
+              <span className="muted">{compact(post.authorFollowers)} followers</span>
+            )}
             <span className="muted">{timeAgo(post.postedAt)}</span>
           </div>
           <p>{post.text}</p>
+          <p className="muted">
+            {compact(post.likeCount)} likes · {compact(post.replyCount)} replies · {compact(post.retweetCount)} reposts · {compact(post.quoteCount)} quotes · {compact(post.viewCount)} views
+          </p>
           <div className="row">
             <a className="btn" href={post.url} target="_blank" rel="noreferrer">Open on X</a>
             <button className="btn secondary" disabled={busy} onClick={() => void shill(post)}>

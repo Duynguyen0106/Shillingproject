@@ -111,19 +111,49 @@ async function main() {
 
   await prisma.kolWatch.upsert({
     where: { communityId_handle: { communityId: community.id, handle: "examplekol" } },
-    update: {},
-    create: { communityId: community.id, handle: "examplekol", displayName: "Example KOL" }
+    update: {
+      displayName: "Example KOL",
+      followers: 128000,
+      following: 412,
+      statusesCount: 4100,
+      verified: true,
+      bio: "Demo watch so the raid feed is not empty."
+    },
+    create: {
+      communityId: community.id,
+      handle: "examplekol",
+      displayName: "Example KOL",
+      followers: 128000,
+      following: 412,
+      statusesCount: 4100,
+      verified: true,
+      bio: "Demo watch so the raid feed is not empty."
+    }
   });
 
   await prisma.feedPost.upsert({
     where: { communityId_url: { communityId: community.id, url: "https://x.com/examplekol/status/1" } },
-    update: { text: "$PEPE looking heavy. Quote this." },
+    update: {
+      text: "$PEPE looking heavy. Quote this.",
+      authorFollowers: 128000,
+      likeCount: 840,
+      replyCount: 62,
+      retweetCount: 110,
+      quoteCount: 21,
+      viewCount: 22000
+    },
     create: {
       communityId: community.id,
       kind: "KOL_POST",
       url: "https://x.com/examplekol/status/1",
       authorHandle: "examplekol",
       authorName: "Example KOL",
+      authorFollowers: 128000,
+      likeCount: 840,
+      replyCount: 62,
+      retweetCount: 110,
+      quoteCount: 21,
+      viewCount: 22000,
       text: "$PEPE looking heavy. Quote this.",
       postedAt: new Date()
     }
@@ -131,12 +161,22 @@ async function main() {
 
   await prisma.feedPost.upsert({
     where: { communityId_url: { communityId: community.id, url: "https://x.com/random/status/2" } },
-    update: { text: `CA ${community.contractAddress}` },
+    update: {
+      text: `CA ${community.contractAddress}`,
+      authorFollowers: 2400,
+      likeCount: 18,
+      replyCount: 7,
+      retweetCount: 3
+    },
     create: {
       communityId: community.id,
       kind: "MENTION",
       url: "https://x.com/random/status/2",
       authorHandle: "random",
+      authorFollowers: 2400,
+      likeCount: 18,
+      replyCount: 7,
+      retweetCount: 3,
       text: `Someone dropped the ${community.ticker} CA ${community.contractAddress}`,
       postedAt: new Date(),
       missionId: mission.id

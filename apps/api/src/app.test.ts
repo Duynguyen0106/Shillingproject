@@ -1277,6 +1277,44 @@ describe("raid feed", () => {
     expect(res.body.kols[0].handle).toBe("examplekol");
   });
 
+  it("filters the feed by KOL handle and min followers", async () => {
+    const app = createApp({
+      community: { findUnique: vi.fn().mockResolvedValue({ id: "demo-community", ticker: "PEPE" }) },
+      feedPost: {
+        findMany: vi.fn().mockResolvedValue([
+          { authorHandle: "whale", kind: "KOL_POST", authorFollowers: 200000, likeCount: 10, replyCount: 0, retweetCount: 0, quoteCount: 0, postedAt: new Date(), url: "https://x.com/whale/status/1" },
+          { authorHandle: "micro", kind: "KOL_POST", authorFollowers: 12, likeCount: 1, replyCount: 0, retweetCount: 0, quoteCount: 0, postedAt: new Date(), url: "https://x.com/micro/status/2" }
+        ])
+      },
+      kolWatch: { findMany: vi.fn().mockResolvedValue([]) }
+    } as never);
+    const res = await request(app).get("/communities/demo-community/feed?handle=whale&minFollowers=10000");
+    expect(res.status).toBe(200);
+    expect(res.body.posts).toHaveLength(1);
+    expect(res.body.posts[0].authorHandle).toBe("whale");
+  });
+
+  it("filters watched KOLs by followers and search", async () => {
+    const app = createApp({
+      community: { findUnique: vi.fn().mockResolvedValue({ id: "demo-community", ticker: "PEPE" }) },
+      feedPost: {
+        findMany: vi.fn().mockResolvedValue([
+          { authorHandle: "whale", kolWatchId: "k1", kind: "KOL_POST", authorFollowers: 200000, likeCount: 40, replyCount: 5, retweetCount: 2, quoteCount: 1, postedAt: new Date() }
+        ])
+      },
+      kolWatch: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: "k1", handle: "whale", displayName: "Whale", followers: 200000 },
+          { id: "k2", handle: "micro", displayName: "Micro", followers: 800 }
+        ])
+      }
+    } as never);
+    const res = await request(app).get("/communities/demo-community/feed?minFollowers=10000");
+    expect(res.status).toBe(200);
+    expect(res.body.kols.map((kol: { handle: string }) => kol.handle)).toEqual(["whale"]);
+    expect(res.body.kols[0].stats.heat).toBe(48);
+  });
+
   it("lets the lead watch a KOL handle", async () => {
     const upsert = vi.fn().mockResolvedValue({ id: "k1", handle: "kol" });
     const app = createApp({
