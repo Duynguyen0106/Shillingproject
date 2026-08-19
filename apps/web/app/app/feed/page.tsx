@@ -12,6 +12,7 @@ import { useConnectedWallet } from "../../../lib/useConnectedWallet";
 import ProofPaste from "../../ProofPaste";
 import RaidScoreboard from "../../RaidScoreboard";
 import ShareOnX from "../../ShareOnX";
+import EmptyState from "../../EmptyState";
 
 type FeedPost = {
   id: string;
@@ -578,12 +579,18 @@ export default function RaidFeedPage() {
           </div>
         ))}
       </div>
-      {(feed?.posts.length ?? 0) === 0 && (
+      {feed && (feed.posts?.length ?? 0) === 0 && (
         <div className="card">
-          <p>No posts match these filters. Watch KOLs, pull live, or loosen followers/interaction.</p>
+          <EmptyState
+            icon="📣"
+            title="No posts in the feed"
+            description="Watch KOL handles, refresh live posts, or loosen follower filters. Once posts appear, shill them to earn points."
+            actionHref="/app/admin/kol-manager"
+            actionLabel="Manage KOL watches →"
+          />
         </div>
       )}
-      {feed?.posts.map((post) => {
+      {feed?.posts?.map((post) => {
         const kol = post.kol ?? feed.kols.find((item) => item.handle === post.authorHandle) ?? null;
         const focused = Boolean(post.focused || feed.focus?.postId === post.id);
         const dim = Boolean(feed.focus && !focused);

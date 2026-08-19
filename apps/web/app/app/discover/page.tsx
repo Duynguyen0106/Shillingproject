@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { API_BASE } from "../../../lib/config";
 import { authHeaders } from "../../../lib/session";
 import { storeCommunity } from "../../../lib/community";
+import EmptyState from "../../EmptyState";
 import Link from "next/link";
 
 interface Community {
@@ -102,7 +103,17 @@ export default function DiscoverPage() {
 
       {loading && <p className="muted">Loading communities…</p>}
       {!loading && filtered.length === 0 && (
-        <div className="card"><p className="muted">No communities match your search.</p></div>
+        <div className="card">
+          <EmptyState
+            icon="🔍"
+            title={query ? "No matches" : "No communities yet"}
+            description={query
+              ? `Nothing matched "${query}". Try another ticker or clear search.`
+              : "Communities appear here once coins are bound on ShillOps. Be the first — search by contract address."}
+            actionHref="/app/onboarding"
+            actionLabel="Find a coin →"
+          />
+        </div>
       )}
 
       <div className="discover-grid">

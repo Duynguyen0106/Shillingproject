@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import ConnectWalletButton from "./ConnectWalletButton";
+import { isNavActive } from "../lib/navActive";
 
 const NAV_LINKS = [
   { href: "/app/feed",        label: "Raid Feed",      icon: "📣" },
@@ -52,7 +53,7 @@ export default function MobileNav() {
       <nav className="mobile-topbar">
         <Link href="/" className="brand">Shill Ops</Link>
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-          <ConnectWalletButton />
+          <ConnectWalletButton compact />
           <button
             className="hamburger-btn"
             onClick={() => setOpen((o) => !o)}
@@ -79,7 +80,7 @@ export default function MobileNav() {
             <Link
               key={l.href}
               href={l.href}
-              className={`drawer-link ${pathname === l.href || pathname.startsWith(l.href + "/") ? "active" : ""}`}
+              className={`drawer-link ${isNavActive(l.href, pathname) ? "active" : ""}`}
             >
               <span className="drawer-icon">{l.icon}</span>
               {l.label}
@@ -94,7 +95,7 @@ export default function MobileNav() {
           <Link
             key={l.href}
             href={l.href}
-            className={`bottom-nav-item ${pathname === l.href ? "active" : ""}`}
+            className={`bottom-nav-item ${isNavActive(l.href, pathname) ? "active" : ""}`}
           >
             <span className="bottom-nav-icon">{l.icon}</span>
             <span className="bottom-nav-label">{l.label}</span>

@@ -73,7 +73,7 @@ export default function DailyQuestPage() {
         <div className={`card daily-quest-card ${quest.completed ? "completed" : ""}`}>
           <div className="dq-icon">{QUEST_ICONS[quest.questType] || "⚡"}</div>
           <div className="dq-body">
-            <div className="dq-type">{quest.questType.toUpperCase()} QUEST</div>
+            <div className="dq-type">{(quest.questType || "").toUpperCase()} QUEST</div>
             <div className="dq-description">{quest.description}</div>
             <div className="dq-bonus">+{quest.pointBonus} pts bonus</div>
           </div>

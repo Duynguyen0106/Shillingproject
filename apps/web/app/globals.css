@@ -1,3 +1,19 @@
+:root {
+  --accent: #6c47ff;
+  --accent-hover: #5a38e0;
+  --accent-muted: #6c47ff22;
+  --surface: #111114;
+  --surface-elevated: #18181b;
+  --border: #27272a;
+  --text: #f4f4f5;
+  --text-muted: #a1a1aa;
+  --success: #22c55e;
+  --danger: #f87171;
+  --radius: 12px;
+  --nav-mobile-top: 56px;
+  --nav-mobile-bottom: 60px;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -29,6 +45,32 @@ a.btn,
 .btn.secondary {
   background: #27272a;
   color: #f4f4f5;
+}
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.btn-compact {
+  padding: 8px 12px;
+  font-size: 13px;
+}
+.wallet-connected-compact {
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+.wallet-badge {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wallet-disconnect-compact {
+  padding: 4px 8px !important;
+  min-width: 32px;
+  font-size: 12px;
+}
+.app-main {
+  min-height: calc(100vh - var(--nav-mobile-top, 0px));
 }
 .container {
   max-width: 960px;
@@ -83,10 +125,25 @@ label {
   gap: 16px;
   align-items: center;
   padding: 16px 24px;
-  border-bottom: 1px solid #27272a;
+  border-bottom: 1px solid var(--border);
   background: #0c0c0fcc;
   position: sticky;
   top: 0;
+  z-index: 40;
+  flex-wrap: wrap;
+}
+.nav a:not(.brand):not(.btn) {
+  color: var(--text-muted);
+  font-size: 14px;
+  white-space: nowrap;
+  transition: color 0.15s;
+}
+.nav a:not(.brand):not(.btn):hover,
+.nav a.nav-active {
+  color: var(--text);
+}
+.nav a.nav-active {
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 .brand {
   color: #fff;
@@ -1428,15 +1485,53 @@ label {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: #13131a;
-  border: 1px solid #1e1e2e;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 10px;
   padding: 0.6rem 1rem;
-  margin: 0.5rem 1rem;
+  margin: 0.5rem max(1rem, env(safe-area-inset-left)) 0.5rem max(1rem, env(safe-area-inset-right));
   font-size: 0.85rem;
   gap: 1rem;
+  flex-wrap: wrap;
+}
+.push-opt-in-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
 }
 .push-opt-in-btn { padding: 0.3rem 0.8rem; font-size: 0.8rem; }
+.push-opt-in-dismiss {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.8rem;
+  padding: 0.25rem 0.5rem;
+}
+.push-opt-in-dismiss:hover { color: var(--text); }
+
+/* ──────────────────────────────────────────────────────────────────
+   EMPTY STATE
+───────────────────────────────────────────────────────────────────*/
+.empty-state {
+  text-align: center;
+  padding: 2rem 1rem;
+}
+.empty-state-icon {
+  font-size: 2.5rem;
+  margin-bottom: 0.75rem;
+}
+.empty-state-title {
+  margin: 0 0 0.5rem;
+  font-size: 1.1rem;
+}
+.empty-state-desc {
+  max-width: 420px;
+  margin: 0 auto 1rem;
+  line-height: 1.5;
+}
+.empty-state-action { margin-top: 0.5rem; }
 
 /* ──────────────────────────────────────────────────────────────────
    COMMUNITY SHARE CARD
@@ -1452,6 +1547,29 @@ label {
 @media (max-width: 768px) {
   .desktop-only { display: none !important; }
   .mobile-only  { display: block !important; }
+  .container {
+    padding: 16px;
+    padding-bottom: calc(16px + var(--nav-mobile-bottom) + env(safe-area-inset-bottom, 0px));
+  }
+  .community-banner {
+    flex-wrap: wrap;
+    gap: 8px;
+    font-size: 13px;
+    padding: 10px 12px;
+  }
+  .modal {
+    width: 100%;
+    max-height: 90vh;
+    margin: 0;
+  }
+  .modal-backdrop {
+    align-items: flex-end;
+    padding: 0;
+  }
+  .modal-backdrop .modal {
+    border-radius: 16px 16px 0 0;
+    max-height: 85vh;
+  }
 }
 
 /* ──────────────────────────────────────────────────────────────────

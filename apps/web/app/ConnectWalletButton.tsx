@@ -85,7 +85,7 @@ async function siweLogin(address: string, provider: WalletProvider, walletLabel?
   return user.wallet as string;
 }
 
-export default function ConnectWalletButton() {
+export default function ConnectWalletButton({ compact = false }: { compact?: boolean }) {
   const [wallet, setWallet] = useState("");
   const [label, setLabel] = useState("");
   const [open, setOpen] = useState(false);
@@ -205,16 +205,23 @@ export default function ConnectWalletButton() {
 
   if (wallet) {
     return (
-      <span className="row" style={{ marginLeft: "auto" }}>
-        <span className="badge">{label ? `${label} · ${shortAddress(wallet)}` : shortAddress(wallet)}</span>
-        <button className="btn secondary" onClick={() => void disconnect()}>Disconnect</button>
+      <span className={`row wallet-connected${compact ? " wallet-connected-compact" : ""}`} style={{ marginLeft: compact ? 0 : "auto" }}>
+        <span className="badge wallet-badge">{label ? `${compact ? label.split(" ")[0] : label} · ${shortAddress(wallet)}` : shortAddress(wallet)}</span>
+        {!compact && <button className="btn secondary" onClick={() => void disconnect()}>Disconnect</button>}
+        {compact && (
+          <button className="btn secondary wallet-disconnect-compact" type="button" onClick={() => void disconnect()} aria-label="Disconnect wallet">
+            ✕
+          </button>
+        )}
       </span>
     );
   }
 
   return (
-    <span className="row" style={{ marginLeft: "auto" }}>
-      <button className="btn" disabled={busy} onClick={() => setOpen(true)}>Connect wallet</button>
+    <span className="row" style={{ marginLeft: compact ? 0 : "auto" }}>
+      <button className={`btn${compact ? " btn-compact" : ""}`} disabled={busy} onClick={() => setOpen(true)}>
+        {compact ? "Connect" : "Connect wallet"}
+      </button>
       {status && !open && <span className="muted">{status}</span>}
       {open && (
         <div className="modal-backdrop" onClick={() => !busy && setOpen(false)}>

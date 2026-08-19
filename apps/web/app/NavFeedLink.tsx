@@ -24,7 +24,7 @@ export default function NavFeedLink() {
   }, []);
 
   return (
-    <Link href="/app/feed" className={onFeed ? "active" : undefined}>
+    <Link href="/app/feed" className={onFeed ? "nav-active" : undefined}>
       Feed
       {unread > 0 && !onFeed && <span className="live-dot">{unread > 9 ? "9+" : unread}</span>}
     </Link>

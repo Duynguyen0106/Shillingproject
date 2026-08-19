@@ -1,23 +1,35 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { usePathname } from "next/navigation";
 import { API_BASE } from "../lib/config";
 import { authHeaders, getStoredToken } from "../lib/session";
 import { getStoredCommunityId } from "../lib/community";
 
+const DISMISS_KEY = "shillops.push.dismissed";
+
 export default function PushOptIn() {
-  const [status, setStatus] = useState<"unknown" | "granted" | "denied" | "loading">("unknown");
+  const pathname = usePathname();
+  const [status, setStatus] = useState<"unknown" | "granted" | "denied" | "loading" | "dismissed">("unknown");
   const connected = Boolean(getStoredToken());
 
   useEffect(() => {
     if (typeof Notification !== "undefined") {
-      setStatus(Notification.permission as any);
+      setStatus(Notification.permission === "granted" ? "granted" : Notification.permission === "denied" ? "denied" : "unknown");
+    }
+    if (typeof window !== "undefined" && localStorage.getItem(DISMISS_KEY) === "1") {
+      setStatus("dismissed");
     }
   }, []);
 
+  const dismiss = () => {
+    localStorage.setItem(DISMISS_KEY, "1");
+    setStatus("dismissed");
+  };
+
   const subscribe = async () => {
     if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
-      alert("Push notifications are not supported in your browser.");
+      dismiss();
       return;
     }
     setStatus("loading");
@@ -43,15 +55,20 @@ export default function PushOptIn() {
     }
   };
 
-  if (!connected || status === "granted") return null;
-  if (status === "denied") return null;
+  if (!connected || status === "granted" || status === "denied" || status === "dismissed") return null;
+  if (pathname === "/" || pathname?.startsWith("/embed/")) return null;
 
   return (
-    <div className="push-opt-in">
+    <div className="push-opt-in" role="region" aria-label="Notification opt-in">
       <span>🔔 Get instant raid alerts</span>
-      <button className="btn push-opt-in-btn" onClick={subscribe} disabled={status === "loading"}>
-        {status === "loading" ? "Enabling…" : "Enable notifications"}
-      </button>
+      <div className="push-opt-in-actions">
+        <button className="btn push-opt-in-btn" onClick={subscribe} disabled={status === "loading"}>
+          {status === "loading" ? "Enabling…" : "Enable"}
+        </button>
+        <button type="button" className="push-opt-in-dismiss" onClick={dismiss} aria-label="Dismiss">
+          Not now
+        </button>
+      </div>
     </div>
   );
 }
