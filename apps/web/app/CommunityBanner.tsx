@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSelectedCommunity } from "../lib/useSelectedCommunity";
 import { getStoredCommunityId } from "../lib/community";
 import { FOCUS_EVENT, PROOF_EVENT, SHILL_EVENT, runShill, type FocusRaid } from "../lib/shillAction";
@@ -17,37 +17,36 @@ export default function CommunityBanner() {
   const [youProved, setYouProved] = useState(false);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
+  const focusPostId = useRef<string | null>(null);
 
   useEffect(() => {
     const onFocus = (message: Event) => {
       const event = (message as CustomEvent<{ communityId?: string; focus?: FocusRaid | null }>).detail;
       if (event?.communityId && event.communityId !== getStoredCommunityId()) return;
       const next = event?.focus ?? null;
+      const same = Boolean(next && focusPostId.current === next.postId);
+      focusPostId.current = next?.postId ?? null;
       setFocus(next);
-      setYouShilled(Boolean(next?.youShilled));
-      setYouProved(Boolean(next?.youProved));
-      setNote("");
+      setYouShilled((prev) => Boolean(next?.youShilled) || (same && prev));
+      setYouProved((prev) => Boolean(next?.youProved) || (same && prev));
+      if (!same) setNote("");
     };
     const onCommunity = () => {
+      focusPostId.current = null;
       setFocus(null);
       setYouShilled(false);
       setYouProved(false);
       setNote("");
     };
     const onShill = (message: Event) => {
-      const event = (message as CustomEvent<{ postId?: string }>).detail;
-      setFocus((current) => {
-        if (current && event?.postId === current.postId) setYouShilled(true);
-        return current;
-      });
+      const event = (message as CustomEvent<{ communityId?: string; postId?: string }>).detail;
+      if (event?.communityId && event.communityId !== getStoredCommunityId()) return;
+      if (event?.postId && event.postId === focusPostId.current) setYouShilled(true);
     };
     const onProof = (message: Event) => {
       const event = (message as CustomEvent<{ postId?: string; communityId?: string }>).detail;
       if (event?.communityId && event.communityId !== getStoredCommunityId()) return;
-      setFocus((current) => {
-        if (current && event?.postId === current.postId) setYouProved(true);
-        return current;
-      });
+      if (event?.postId && event.postId === focusPostId.current) setYouProved(true);
     };
     window.addEventListener(FOCUS_EVENT, onFocus);
     window.addEventListener("shillops-community", onCommunity);

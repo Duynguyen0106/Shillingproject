@@ -100,6 +100,21 @@ export function pickRaidReplyTask<T extends { id: string; details?: string | nul
   return raidTasks.find((task) => playIdFromDetails(task.details) === "reply-narrative") ?? raidTasks[0] ?? null;
 }
 
+export function raidReplyAlreadyScored<T extends { id: string; details?: string | null }>(
+  tasks: T[],
+  targetUrl: string,
+  submittedTaskIds: Iterable<string>
+): boolean {
+  const done = new Set(submittedTaskIds);
+  const want = parseXStatusUrl(targetUrl)?.id;
+  return tasks.some((task) => {
+    if (!done.has(task.id) || !isRaidReplyPlay(task.details)) return false;
+    const got = parseXStatusUrl(targetUrlFromDetails(task.details) || "")?.id;
+    if (want && got) return got === want;
+    return !got && playIdFromDetails(task.details) === "reply-narrative";
+  });
+}
+
 export function proofIsReplyToRaidTarget(proofUrl: string, details?: string | null): { ok: true } | { ok: false; error: string } {
   if (!taskNeedsRaidReplyProof(details)) return { ok: true };
   const target = parseXStatusUrl(targetUrlFromDetails(details) || "");

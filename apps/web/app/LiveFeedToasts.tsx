@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { API_BASE } from "../lib/config";
 import { getStoredCommunityId } from "../lib/community";
 import { compactCount, dispatchLivePost, type LiveFeedEvent, type LiveKol, type LivePost } from "../lib/liveFeed";
-import { FOCUS_EVENT, PROOF_EVENT, RAID_EVENT, dispatchFocus, runShill, type FocusRaid } from "../lib/shillAction";
+import { FOCUS_EVENT, PROOF_EVENT, RAID_EVENT, SHILL_EVENT, dispatchFocus, runShill, type FocusRaid } from "../lib/shillAction";
 import { getStoredWallet } from "../lib/session";
 import { useConnectedWallet } from "../lib/useConnectedWallet";
 import ProofPaste from "./ProofPaste";
@@ -60,20 +60,26 @@ export default function LiveFeedToasts() {
       const nextId = next?.postId ?? null;
       const changed = nextId !== focusId.current;
       focusId.current = nextId;
-      setFocus(next);
       if (!next) {
+        setFocus(null);
         setToasts((current) => current.filter((item) => !item.focused));
         if (emit && changed) dispatchFocus(getStoredCommunityId(), null);
         return;
       }
+      const hydrated: FocusRaid = {
+        ...next,
+        youShilled: Boolean(next.youShilled) || shilled.current.has(next.postId),
+        youProved: Boolean(next.youProved) || proved.current.has(next.postId)
+      };
+      setFocus(hydrated);
       const sticky = toastFromFocus(
         getStoredCommunityId(),
-        next,
-        shilled.current.has(next.postId) || Boolean(next.youShilled),
-        proved.current.has(next.postId) || Boolean(next.youProved)
+        hydrated,
+        hydrated.youShilled ?? false,
+        hydrated.youProved ?? false
       );
       setToasts((current) => [sticky, ...current.filter((item) => !item.focused && item.post.id !== next.postId)].slice(0, 3));
-      if (emit && changed) dispatchFocus(getStoredCommunityId(), next);
+      if (emit && changed) dispatchFocus(getStoredCommunityId(), hydrated);
     }
 
     function pushEvent(event: LiveFeedEvent, popup: boolean) {
@@ -192,6 +198,22 @@ export default function LiveFeedToasts() {
     };
     window.addEventListener("shillops-community", onCommunity);
     window.addEventListener(FOCUS_EVENT, onFocus);
+    const onShill = (message: Event) => {
+      const event = (message as CustomEvent<{ communityId?: string; postId?: string }>).detail;
+      if (event?.communityId && event.communityId !== getStoredCommunityId()) return;
+      if (!event?.postId) return;
+      shilled.current.add(event.postId);
+      setToasts((current) => current.map((item) => item.post.id === event.postId ? { ...item, youShilled: true } : item));
+    };
+    const onRaid = (message: Event) => {
+      const event = (message as CustomEvent<{ communityId?: string; postId?: string; raider?: { wallet?: string } }>).detail;
+      if (event?.communityId && event.communityId !== getStoredCommunityId()) return;
+      if (!event?.postId) return;
+      const wallet = getStoredWallet();
+      if (!wallet || !event.raider?.wallet || event.raider.wallet.toLowerCase() !== wallet.toLowerCase()) return;
+      shilled.current.add(event.postId);
+      setToasts((current) => current.map((item) => item.post.id === event.postId ? { ...item, youShilled: true } : item));
+    };
     const onProof = (message: Event) => {
       const event = (message as CustomEvent<{ communityId?: string; postId?: string }>).detail;
       if (event?.communityId && event.communityId !== getStoredCommunityId()) return;
@@ -199,6 +221,8 @@ export default function LiveFeedToasts() {
       proved.current.add(event.postId);
       setToasts((current) => current.map((item) => item.post.id === event.postId ? { ...item, youProved: true } : item));
     };
+    window.addEventListener(SHILL_EVENT, onShill);
+    window.addEventListener(RAID_EVENT, onRaid);
     window.addEventListener(PROOF_EVENT, onProof);
     return () => {
       closed = true;
@@ -206,6 +230,8 @@ export default function LiveFeedToasts() {
       window.clearInterval(pollTimer);
       window.removeEventListener("shillops-community", onCommunity);
       window.removeEventListener(FOCUS_EVENT, onFocus);
+      window.removeEventListener(SHILL_EVENT, onShill);
+      window.removeEventListener(RAID_EVENT, onRaid);
       window.removeEventListener(PROOF_EVENT, onProof);
     };
   }, []);

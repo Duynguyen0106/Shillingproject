@@ -30,7 +30,7 @@ import {
 import { ingestNormalizedPost, kolProfileData, parseWatchHandle, refreshAllCommunityFeeds, refreshCommunityFeed } from "./feed";
 import { liveListenerCount, postsCreatedSince, publishLiveFocus, publishLiveRaid, snapshotKol, subscribeLiveFeed } from "./livefeed";
 import { attachShillState, serializeShillHistory } from "./shill";
-import { buildShillCopy, buildShillKit, isRaidReplyPlay, liveRaiderIds, pickRaidReplyTask, proofIsReplyToRaidTarget } from "./shillkit";
+import { buildShillCopy, buildShillKit, isRaidReplyPlay, liveRaiderIds, pickRaidReplyTask, proofIsReplyToRaidTarget, raidReplyAlreadyScored } from "./shillkit";
 import { isFocusLive, serializeFocus, focusChangeAllowed, shillAllowedDuringFocus } from "./focus";
 import { applyFeedFilters, applyKolFilters, attachKolStats, configuredFeedProvider, fetchUserProfile, mentionMatches, parseXHandle, parseXStatusUrl, postHeat } from "./xfeed";
 
@@ -109,7 +109,7 @@ const shillPostSchema = z.object({
 
 const feedProofSchema = z.object({
   wallet: z.string().min(3).optional(),
-  proofUrl: z.string().url(),
+  proofUrl: z.string().trim().url(),
   proofText: z.string().optional()
 });
 
@@ -1753,12 +1753,15 @@ export function createApp(prisma: PrismaClient) {
       create: { missionId: mission.id, userId: user.id }
     });
     const submitted = mission.tasks.filter((task) => (task.submissions?.length ?? 0) > 0).map((task) => task.id);
-    const task = pickRaidReplyTask(mission.tasks, post.url, submitted);
-    if (!task) {
-      const already = pickRaidReplyTask(mission.tasks, post.url);
-      if (already) return res.status(409).json({ error: "You already scored a reply on this raid.", alreadyProved: true });
-      return res.status(404).json({ error: "This raid has no reply task to score." });
+    if (raidReplyAlreadyScored(mission.tasks, post.url, submitted)) {
+      return res.status(409).json({ error: "You already scored a reply on this raid.", alreadyProved: true });
     }
+    const task = pickRaidReplyTask(mission.tasks, post.url, submitted);
+    if (!task) return res.status(404).json({ error: "This raid has no reply task to score." });
+    const existing = await prisma.submission?.findFirst?.({
+      where: { taskId: task.id, userId: user.id }
+    });
+    if (existing) return res.status(409).json({ error: "You already scored a reply on this raid.", alreadyProved: true });
     const submission = await recordVerifiedSubmission(prisma, {
       task: { ...task, mission },
       userId: user.id,

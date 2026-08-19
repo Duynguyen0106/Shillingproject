@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import { proofPlaceholder } from "../lib/playbook";
+import { isXStatusUrl, proofPlaceholder } from "../lib/playbook";
 import { runProof } from "../lib/shillAction";
 import { useConnectedWallet } from "../lib/useConnectedWallet";
 
@@ -32,7 +32,11 @@ export default function ProofPaste({
     setScored(youProved);
     setNote("");
     setProofUrl(PLACEHOLDER);
-  }, [youProved, postId]);
+  }, [postId]);
+
+  useEffect(() => {
+    if (youProved) setScored(true);
+  }, [youProved]);
 
   if (scored) {
     return <span className="badge ok">Reply scored</span>;
@@ -46,8 +50,15 @@ export default function ProofPaste({
 
   async function submit(event?: FormEvent) {
     event?.preventDefault();
+    const trimmed = proofUrl.trim();
+    if (!isXStatusUrl(trimmed)) {
+      const msg = "Paste the X status URL of YOUR reply, not the KOL tweet or a profile link.";
+      setNote(msg);
+      onStatus?.(msg);
+      return;
+    }
     setBusy(true);
-    const result = await runProof({ communityId, postId, proofUrl });
+    const result = await runProof({ communityId, postId, proofUrl: trimmed });
     setBusy(false);
     if (result.alreadyProved) {
       setScored(true);

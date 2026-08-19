@@ -1943,4 +1943,124 @@ describe("raid feed", () => {
     expect(dup.body.alreadyProved).toBe(true);
     expect(createSubmission).not.toHaveBeenCalled();
   });
+
+  it("rejects a placeholder reply URL and trims whitespace on a real one", async () => {
+    const createSubmission = vi.fn().mockResolvedValue({ id: "sub-1", pointsAwarded: 18 });
+    const app = createApp({
+      community: { findUnique: vi.fn().mockResolvedValue({ id: "demo-community", ticker: "PEPE" }) },
+      feedPost: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "p1",
+          communityId: "demo-community",
+          url: "https://x.com/whale/status/99",
+          kind: "KOL_POST",
+          missionId: "m1",
+          authorHandle: "whale",
+          text: "gm"
+        })
+      },
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "u1", wallet: "0xdemo" }) },
+      communityMember: {
+        findUnique: vi.fn().mockResolvedValue({ id: "mem1", userId: "u1", communityId: "demo-community" }),
+        updateMany: vi.fn()
+      },
+      feedShill: { count: vi.fn().mockResolvedValue(1) },
+      mission: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "m1",
+          communityId: "demo-community",
+          priority: Priority.HIGH,
+          status: "ACTIVE",
+          createdAt: new Date(),
+          tasks: [{
+            id: "task-reply",
+            title: "Reply the narrative",
+            actionType: ActionType.REPLY,
+            createdAt: new Date(),
+            details: "play:reply-narrative\ntarget:https://x.com/whale/status/99",
+            submissions: []
+          }]
+        })
+      },
+      missionClaim: { upsert: vi.fn() },
+      submission: { create: createSubmission },
+      score: { create: vi.fn(), groupBy: vi.fn().mockResolvedValue([]) },
+      engagementEvent: { create: vi.fn() },
+      leaderboardSnapshot: { create: vi.fn() }
+    } as never);
+
+    const placeholder = await request(app).post("/communities/demo-community/feed/p1/proof").send({
+      wallet: "0xdemo",
+      proofUrl: "https://x.com/yourhandle/status/"
+    });
+    expect(placeholder.status).toBe(400);
+    expect(createSubmission).not.toHaveBeenCalled();
+
+    const trimmed = await request(app).post("/communities/demo-community/feed/p1/proof").send({
+      wallet: "0xdemo",
+      proofUrl: "  https://x.com/me/status/100  "
+    });
+    expect(trimmed.status).toBe(200);
+    expect(createSubmission).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not score a second play on the same tweet after a raid reply is already in", async () => {
+    const createSubmission = vi.fn();
+    const app = createApp({
+      community: { findUnique: vi.fn().mockResolvedValue({ id: "demo-community", ticker: "PEPE" }) },
+      feedPost: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "p1",
+          communityId: "demo-community",
+          url: "https://x.com/whale/status/99",
+          kind: "KOL_POST",
+          missionId: "m1",
+          authorHandle: "whale",
+          text: "gm"
+        })
+      },
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "u1", wallet: "0xdemo" }) },
+      communityMember: {
+        findUnique: vi.fn().mockResolvedValue({ id: "mem1", userId: "u1", communityId: "demo-community" }),
+        updateMany: vi.fn()
+      },
+      feedShill: { count: vi.fn().mockResolvedValue(1) },
+      mission: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "m1",
+          communityId: "demo-community",
+          priority: Priority.HIGH,
+          status: "ACTIVE",
+          createdAt: new Date(),
+          tasks: [
+            {
+              id: "task-reply",
+              title: "Reply the narrative",
+              actionType: ActionType.REPLY,
+              createdAt: new Date(),
+              details: "play:reply-narrative\ntarget:https://x.com/whale/status/99",
+              submissions: [{ id: "old", taskId: "task-reply" }]
+            },
+            {
+              id: "task-quote",
+              title: "Quote the signal",
+              actionType: ActionType.SHARE,
+              createdAt: new Date(),
+              details: "play:quote-signal\ntarget:https://x.com/whale/status/99",
+              submissions: []
+            }
+          ]
+        })
+      },
+      missionClaim: { upsert: vi.fn() },
+      submission: { create: createSubmission }
+    } as never);
+    const res = await request(app).post("/communities/demo-community/feed/p1/proof").send({
+      wallet: "0xdemo",
+      proofUrl: "https://x.com/me/status/100"
+    });
+    expect(res.status).toBe(409);
+    expect(res.body.alreadyProved).toBe(true);
+    expect(createSubmission).not.toHaveBeenCalled();
+  });
 });

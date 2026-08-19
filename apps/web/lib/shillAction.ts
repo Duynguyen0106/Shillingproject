@@ -81,7 +81,7 @@ export async function runShill(input: { communityId: string; postId: string; res
   if (focus) dispatchFocus(input.communityId, focus);
   if (typeof window !== "undefined") {
     window.dispatchEvent(new CustomEvent(SHILL_EVENT, {
-      detail: { postId: input.postId, reshill: Boolean(input.reshill), kit: body.kit, missionId: body.missionId, alreadyShilled: Boolean(body.alreadyShilled) }
+      detail: { communityId: input.communityId, postId: input.postId, reshill: Boolean(input.reshill), kit: body.kit, missionId: body.missionId, alreadyShilled: Boolean(body.alreadyShilled) }
     }));
   }
   if (body.alreadyShilled && !input.reshill) {

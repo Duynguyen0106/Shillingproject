@@ -66,6 +66,20 @@ export function proofPlaceholder(details?: string | null): string {
   return "https://x.com/example/status/1";
 }
 
+export function isXStatusUrl(value: string): boolean {
+  try {
+    const url = new URL(value.trim());
+    const host = url.hostname.replace(/^www\./, "").toLowerCase();
+    if (host !== "x.com" && host !== "twitter.com") return false;
+    const parts = url.pathname.split("/").filter(Boolean);
+    const statusIdx = parts.indexOf("status");
+    const id = statusIdx >= 0 ? parts[statusIdx + 1] : null;
+    return Boolean(id && /^\d+$/.test(id));
+  } catch {
+    return false;
+  }
+}
+
 export function isRaidReplyPlay(details?: string | null): boolean {
   const id = playIdFromDetails(details);
   return id === "reply-narrative" || id === "quote-signal" || id === "fud-ratio";

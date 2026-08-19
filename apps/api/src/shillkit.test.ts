@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildShillCopy, buildShillKit, liveRaiderIds, pickRaidReplyTask, proofIsReplyToRaidTarget, xReplyIntentUrl } from "./shillkit";
+import { buildShillCopy, buildShillKit, liveRaiderIds, pickRaidReplyTask, proofIsReplyToRaidTarget, raidReplyAlreadyScored, xReplyIntentUrl } from "./shillkit";
 
 describe("shill kit", () => {
   it("builds talk track copy with ticker and CA", () => {
@@ -34,6 +34,7 @@ describe("shill kit", () => {
     const details = "play:reply-narrative\ntarget:https://x.com/whale/status/99";
     expect(proofIsReplyToRaidTarget("https://x.com/whale/status/99", details).ok).toBe(false);
     expect(proofIsReplyToRaidTarget("https://x.com/me/status/100", details)).toEqual({ ok: true });
+    expect(proofIsReplyToRaidTarget("https://x.com/yourhandle/status/", details).ok).toBe(false);
     expect(proofIsReplyToRaidTarget("https://x.com/me/status/1", "play:share-telegram").ok).toBe(true);
   });
 
@@ -50,5 +51,15 @@ describe("shill kit", () => {
       "https://x.com/whale/status/99",
       ["reply"]
     )?.id).toBe("open");
+  });
+
+  it("treats a submitted raid-reply on the same tweet as already scored", () => {
+    const tasks = [
+      { id: "reply", details: "play:reply-narrative\ntarget:https://x.com/whale/status/99" },
+      { id: "quote", details: "play:quote-signal\ntarget:https://x.com/whale/status/99" }
+    ];
+    expect(raidReplyAlreadyScored(tasks, "https://x.com/whale/status/99", ["reply"])).toBe(true);
+    expect(raidReplyAlreadyScored(tasks, "https://x.com/whale/status/99", [])).toBe(false);
+    expect(raidReplyAlreadyScored(tasks, "https://x.com/other/status/1", ["reply"])).toBe(false);
   });
 });
