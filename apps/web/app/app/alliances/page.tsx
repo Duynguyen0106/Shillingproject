@@ -1,11 +1,11 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { API_BASE } from "../../../lib/config";
-import { authHeaders, getStoredToken } from "../../../lib/session";
-import { getStoredCommunityId } from "../../../lib/community";
-import ConnectWalletButton from "../../ConnectWalletButton";
 import Link from "next/link";
+import { API_BASE } from "../../../lib/config";
+import { authHeaders } from "../../../lib/session";
+import { getStoredCommunityId } from "../../../lib/community";
+import { WalletGate } from "../../ConnectToContinue";
 
 interface Alliance {
   id: string;
@@ -32,7 +32,6 @@ export default function AlliancePage() {
   const [creating, setCreating] = useState(false);
   const [createMsg, setCreateMsg] = useState<string | null>(null);
   const communityId = getStoredCommunityId();
-  const connected = Boolean(getStoredToken());
 
   const load = useCallback(() => {
     if (!communityId) { setLoading(false); return; }
@@ -82,7 +81,7 @@ export default function AlliancePage() {
     <main className="container">
       <div className="kicker">Cross-community power</div>
       <h1>Alliance Raids ⚔️</h1>
-      <p className="muted">Join forces with another community to raid a target post together. Alliance raids pool shills and boost visibility.</p>
+      <p className="muted page-lead">Join forces with another community to raid a target post together. Alliance raids pool shills and boost visibility.</p>
 
       {loading && <p className="muted">Loading…</p>}
 
@@ -103,7 +102,10 @@ export default function AlliancePage() {
         </div>
       ))}
 
-      {connected && (
+      <WalletGate
+        title="Connect to propose alliance raids"
+        description="Community leads need a connected wallet to launch cross-community raids."
+      >
         <div className="card" style={{ marginTop: "2rem" }}>
           <h2>Propose an Alliance Raid</h2>
           <p className="muted">Only the community lead can propose. Select an ally community and a target post.</p>
@@ -129,14 +131,9 @@ export default function AlliancePage() {
           </button>
           {createMsg && <p className="muted" style={{ marginTop: "0.5rem" }}>{createMsg}</p>}
         </div>
-      )}
-      {!connected && (
-        <div className="card" style={{ marginTop: "2rem" }}>
-          <p className="muted">Connect wallet to propose alliance raids.</p>
-          <ConnectWalletButton />
-        </div>
-      )}
-      <p style={{ marginTop: "1.5rem" }}><Link href="/app/feed">← Back to feed</Link></p>
+      </WalletGate>
+
+      <p className="page-back"><Link href="/app/feed">← Back to feed</Link></p>
     </main>
   );
 }

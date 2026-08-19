@@ -1,11 +1,11 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { API_BASE } from "../../../lib/config";
-import { authHeaders, getStoredToken } from "../../../lib/session";
-import { getStoredCommunityId } from "../../../lib/community";
-import ConnectWalletButton from "../../ConnectWalletButton";
 import Link from "next/link";
+import { API_BASE } from "../../../lib/config";
+import { authHeaders } from "../../../lib/session";
+import { getStoredCommunityId } from "../../../lib/community";
+import ConnectToContinue, { useAuthedSession } from "../../ConnectToContinue";
 
 type NotifKind = "achievement" | "proof_scored" | "alliance" | "announcement" | "season" | "quest" | "referral";
 
@@ -29,8 +29,6 @@ const KIND_ICONS: Record<NotifKind, string> = {
   referral:     "🔗",
 };
 
-// We synthesise notifications client-side from existing API data
-// since there's no separate notifications table yet.
 async function fetchNotifications(communityId: string, headers: Record<string, string>): Promise<Notif[]> {
   const [me, achievements, announcements] = await Promise.all([
     fetch(`${API_BASE}/me?communityId=${communityId}`, { headers }).then((r) => r.ok ? r.json() : null) as Promise<any>,
@@ -40,7 +38,6 @@ async function fetchNotifications(communityId: string, headers: Record<string, s
 
   const notifs: Notif[] = [];
 
-  // Achievements
   for (const a of (achievements || [])) {
     notifs.push({
       id: `ach-${a.achievementId}`,
@@ -52,7 +49,6 @@ async function fetchNotifications(communityId: string, headers: Record<string, s
     });
   }
 
-  // Recent submissions (proof scored)
   for (const s of ((me?.submissions as any[]) || []).slice(0, 5)) {
     notifs.push({
       id: `sub-${s.id}`,
@@ -65,7 +61,6 @@ async function fetchNotifications(communityId: string, headers: Record<string, s
     });
   }
 
-  // Announcements
   for (const a of (announcements || []).slice(0, 3)) {
     notifs.push({
       id: `ann-${a.id}`,
@@ -77,14 +72,13 @@ async function fetchNotifications(communityId: string, headers: Record<string, s
     });
   }
 
-  // Sort newest first
   return notifs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
 
 export default function NotificationsPage() {
   const [notifs, setNotifs] = useState<Notif[]>([]);
   const [loading, setLoading] = useState(true);
-  const connected = Boolean(getStoredToken());
+  const connected = useAuthedSession();
   const communityId = getStoredCommunityId();
 
   const load = useCallback(async () => {
@@ -98,18 +92,13 @@ export default function NotificationsPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  if (!connected) return (
-    <main className="container">
-      <h1>Notifications</h1>
-      <div className="card"><p className="muted">Connect wallet to see your notifications.</p><ConnectWalletButton /></div>
-    </main>
-  );
-
   return (
-    <main className="container">
-      <div className="kicker">Stay informed</div>
-      <h1>Notifications</h1>
-
+    <ConnectToContinue
+      title="Notifications"
+      kicker="Stay informed"
+      gateDescription="Connect wallet to see your activity feed — achievements, scored proofs, and announcements."
+      backHref="/app/me"
+    >
       {loading && <p className="muted">Loading…</p>}
       {!loading && notifs.length === 0 && (
         <div className="card">
@@ -133,8 +122,6 @@ export default function NotificationsPage() {
           </div>
         ))}
       </div>
-
-      <p style={{ marginTop: "1.5rem" }}><Link href="/app/me">← Back to My Ops</Link></p>
-    </main>
+    </ConnectToContinue>
   );
 }

@@ -2,10 +2,9 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { API_BASE } from "../../../../lib/config";
-import { authHeaders, getStoredToken } from "../../../../lib/session";
+import { authHeaders } from "../../../../lib/session";
 import { getStoredCommunityId } from "../../../../lib/community";
-import ConnectWalletButton from "../../../ConnectWalletButton";
-import Link from "next/link";
+import ConnectToContinue from "../../../ConnectToContinue";
 
 interface KOL {
   id: string;
@@ -23,7 +22,6 @@ export default function KolManagerPage() {
   const [newName, setNewName] = useState("");
   const [adding, setAdding] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-  const connected = Boolean(getStoredToken());
   const communityId = getStoredCommunityId();
 
   const load = useCallback(() => {
@@ -62,21 +60,15 @@ export default function KolManagerPage() {
     setKols((k) => k.filter((x) => x.handle !== handle));
   };
 
-  if (!connected) return (
-    <main className="container">
-      <h1>KOL Watch Manager</h1>
-      <div className="card"><ConnectWalletButton /></div>
-    </main>
-  );
-
   return (
-    <main className="container">
-      <div className="kicker">Lead tools</div>
-      <h1>KOL Watch Manager</h1>
-      <p className="muted">
-        Track X accounts (KOLs, whale wallets, CT influencers). When they post, it automatically appears in your raid feed and can trigger shill missions.
-      </p>
-
+    <ConnectToContinue
+      title="KOL Watch Manager"
+      kicker="Lead tools"
+      description="Track X accounts (KOLs, whale wallets, CT influencers). When they post, it automatically appears in your raid feed and can trigger shill missions."
+      gateDescription="Connect wallet to manage KOL watch lists for your community."
+      backHref="/app/admin/dashboard"
+      backLabel="← Back to admin"
+    >
       {loading && <p className="muted">Loading…</p>}
       {!loading && kols.length === 0 && (
         <div className="card"><p className="muted">No KOLs tracked yet. Add one below.</p></div>
@@ -110,8 +102,6 @@ export default function KolManagerPage() {
         <button className="btn" onClick={add} disabled={adding}>Add KOL</button>
         {msg && <p className="muted" style={{ marginTop: "0.5rem" }}>{msg}</p>}
       </div>
-
-      <p style={{ marginTop: "1.5rem" }}><Link href="/app/admin/dashboard">← Back to admin</Link></p>
-    </main>
+    </ConnectToContinue>
   );
 }

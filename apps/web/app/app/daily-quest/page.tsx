@@ -1,11 +1,11 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { API_BASE } from "../../../lib/config";
-import { authHeaders, getStoredToken } from "../../../lib/session";
-import { getStoredCommunityId } from "../../../lib/community";
-import ConnectWalletButton from "../../ConnectWalletButton";
 import Link from "next/link";
+import { API_BASE } from "../../../lib/config";
+import { authHeaders } from "../../../lib/session";
+import { getStoredCommunityId } from "../../../lib/community";
+import { WalletGate, useAuthedSession } from "../../ConnectToContinue";
 
 interface Quest {
   id: string;
@@ -28,7 +28,7 @@ export default function DailyQuestPage() {
   const [loading, setLoading] = useState(true);
   const [completing, setCompleting] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-  const connected = Boolean(getStoredToken());
+  const connected = useAuthedSession();
   const communityId = getStoredCommunityId();
 
   const load = useCallback(() => {
@@ -63,7 +63,7 @@ export default function DailyQuestPage() {
     <main className="container">
       <div className="kicker">Daily grind</div>
       <h1>Daily Quest</h1>
-      <p className="muted">Complete today's quest to earn bonus points. Resets at midnight UTC.</p>
+      <p className="muted page-lead">Complete today's quest to earn bonus points. Resets at midnight UTC.</p>
 
       {loading && <p className="muted">Loading…</p>}
 
@@ -79,19 +79,22 @@ export default function DailyQuestPage() {
           </div>
           {quest.completed ? (
             <div className="dq-done">✅ Done for today</div>
-          ) : connected ? (
-            <button className="btn dq-btn" onClick={complete} disabled={completing}>
-              {completing ? "Completing…" : "Mark complete"}
-            </button>
           ) : (
-            <ConnectWalletButton />
+            <WalletGate
+              title="Connect to complete"
+              description="Sign in with your wallet to claim today's quest bonus."
+            >
+              <button className="btn dq-btn" onClick={complete} disabled={completing}>
+                {completing ? "Completing…" : "Mark complete"}
+              </button>
+            </WalletGate>
           )}
         </div>
       )}
 
       {msg && <p className="muted" style={{ marginTop: "0.75rem" }}>{msg}</p>}
 
-      <p style={{ marginTop: "1.5rem" }}><Link href="/app/me">← Back to My Ops</Link></p>
+      <p className="page-back"><Link href="/app/me">← Back to My Ops</Link></p>
     </main>
   );
 }

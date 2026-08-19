@@ -2,10 +2,9 @@
 
 import { useState } from "react";
 import { API_BASE } from "../../../lib/config";
-import { authHeaders, getStoredToken } from "../../../lib/session";
+import { authHeaders } from "../../../lib/session";
 import { getStoredCommunityId } from "../../../lib/community";
-import ConnectWalletButton from "../../ConnectWalletButton";
-import Link from "next/link";
+import ConnectToContinue from "../../ConnectToContinue";
 
 interface ClaimResult {
   claimId: string;
@@ -23,7 +22,6 @@ export default function RedeemOnChainPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [txHash, setTxHash] = useState("");
   const [confirming, setConfirming] = useState(false);
-  const connected = Boolean(getStoredToken());
   const communityId = getStoredCommunityId();
 
   const generate = async () => {
@@ -67,21 +65,14 @@ export default function RedeemOnChainPage() {
     try { return (BigInt(amt) / BigInt("1000000000000000000")).toString(); } catch { return amt; }
   };
 
-  if (!connected) return (
-    <main className="container">
-      <h1>Redeem Tokens</h1>
-      <div className="card"><p className="muted">Connect wallet to redeem your points for tokens.</p><ConnectWalletButton /></div>
-    </main>
-  );
-
   return (
-    <main className="container">
-      <div className="kicker">Points → Tokens</div>
-      <h1>Redeem Tokens On-Chain</h1>
-      <p className="muted">
-        Convert your ShillOps points into community tokens. A signed claim is generated server-side — use it to call the redemption contract within 24 hours.
-      </p>
-
+    <ConnectToContinue
+      title="Redeem Tokens On-Chain"
+      kicker="Points → Tokens"
+      description="Convert your ShillOps points into community tokens. A signed claim is generated server-side — use it to call the redemption contract within 24 hours."
+      gateDescription="Connect wallet to redeem your points for tokens."
+      backHref="/app/me"
+    >
       {!claim && (
         <div className="card">
           <div className="form-group">
@@ -138,8 +129,6 @@ export default function RedeemOnChainPage() {
         </ol>
         <p className="muted" style={{ marginTop: "0.5rem", fontSize: "0.8rem" }}>The claim signature is signed by the ShillOps server key. The contract verifies it to prevent unauthorized claims.</p>
       </div>
-
-      <p style={{ marginTop: "1.5rem" }}><Link href="/app/me">← Back to My Ops</Link></p>
-    </main>
+    </ConnectToContinue>
   );
 }

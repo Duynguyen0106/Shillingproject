@@ -9,6 +9,7 @@ import LiveFeedToasts from "./LiveFeedToasts";
 import MobileNav from "./MobileNav";
 import NavFeedLink from "./NavFeedLink";
 import PushOptIn from "./PushOptIn";
+import ApiStatusBanner from "./ApiStatusBanner";
 
 /** Routes that use their own chrome (landing nav, embed widget). */
 function usesAppChrome(pathname: string | null): boolean {
@@ -46,6 +47,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
           <div className="mobile-only mobile-body-offset" aria-hidden />
 
           <CommunityBanner />
+          <ApiStatusBanner />
           <PushOptIn />
         </>
       )}

@@ -2,9 +2,10 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { API_BASE } from "../../../lib/config";
-import { authHeaders, getStoredToken } from "../../../lib/session";
+import { authHeaders } from "../../../lib/session";
 import { getStoredCommunityId } from "../../../lib/community";
-import ConnectWalletButton from "../../ConnectWalletButton";
+import { WalletGate, useAuthedSession } from "../../ConnectToContinue";
+import SeasonSparkline from "../../SeasonSparkline";
 import Link from "next/link";
 
 interface Season {
@@ -20,9 +21,17 @@ interface SeasonLeaderboard {
   leaderboard: { rank: number; user: { wallet: string; displayName: string | null }; points: number }[];
 }
 
+interface TimelinePoint {
+  date: string;
+  points: number;
+  cumulative: number;
+}
+
 export default function SeasonsPage() {
   const [seasons, setSeasons] = useState<Season[]>([]);
   const [selected, setSelected] = useState<SeasonLeaderboard | null>(null);
+  const [timeline, setTimeline] = useState<TimelinePoint[]>([]);
+  const [chartMode, setChartMode] = useState<"daily" | "cumulative">("daily");
   const [loading, setLoading] = useState(true);
   const [lbLoading, setLbLoading] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -30,7 +39,7 @@ export default function SeasonsPage() {
   const [newStart, setNewStart] = useState("");
   const [newEnd, setNewEnd] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
-  const connected = Boolean(getStoredToken());
+  const connected = useAuthedSession();
   const communityId = getStoredCommunityId();
 
   const load = useCallback(() => {
@@ -38,6 +47,7 @@ export default function SeasonsPage() {
     fetch(`${API_BASE}/communities/${communityId}/seasons`)
       .then((r) => r.ok ? r.json() : [])
       .then((d) => setSeasons(Array.isArray(d) ? d : []))
+      .catch(() => setSeasons([]))
       .finally(() => setLoading(false));
   }, [communityId]);
 
@@ -45,9 +55,14 @@ export default function SeasonsPage() {
 
   const viewLeaderboard = (season: Season) => {
     setLbLoading(true);
-    fetch(`${API_BASE}/communities/${communityId}/seasons/${season.id}/leaderboard`)
-      .then((r) => r.ok ? r.json() : null)
-      .then((d) => setSelected(d))
+    Promise.all([
+      fetch(`${API_BASE}/communities/${communityId}/seasons/${season.id}/leaderboard`).then((r) => r.ok ? r.json() : null),
+      fetch(`${API_BASE}/communities/${communityId}/seasons/${season.id}/timeline`).then((r) => r.ok ? r.json() : { timeline: [] })
+    ])
+      .then(([lb, tl]) => {
+        setSelected(lb);
+        setTimeline(Array.isArray(tl?.timeline) ? tl.timeline : []);
+      })
       .finally(() => setLbLoading(false));
   };
 
@@ -76,7 +91,7 @@ export default function SeasonsPage() {
     const res = await fetch(`${API_BASE}/communities/${communityId}/seasons/${season.id}/end`, {
       method: "POST", headers: authHeaders()
     });
-    if (res.ok) { setMsg("Season ended and rankings snapshot saved!"); load(); }
+    if (res.ok) { setMsg("Season ended and rankings snapshot saved!"); load(); setSelected(null); }
     else { const e = await res.json().catch(() => ({})); setMsg(e.error || "Failed"); }
   };
 
@@ -86,10 +101,12 @@ export default function SeasonsPage() {
     <main className="container">
       <div className="kicker">Competitive epochs</div>
       <h1>Seasons</h1>
-      <p className="muted">Seasons are timed competitions. At the end, rankings are snapshot — top raiders earn recognition and multiplier boosts.</p>
+      <p className="muted page-lead">Seasons are timed competitions. View leaderboards and activity charts — connect wallet to create or end a season.</p>
 
       {loading && <p className="muted">Loading…</p>}
-      {!loading && seasons.length === 0 && <div className="card"><p className="muted">No seasons yet. Create the first one below!</p></div>}
+      {!loading && seasons.length === 0 && (
+        <div className="card"><p className="muted">No seasons yet. Connect wallet to create the first one.</p></div>
+      )}
 
       {seasons.map((s) => (
         <div key={s.id} className={`card season-card ${s.status}`}>
@@ -99,34 +116,54 @@ export default function SeasonsPage() {
           </div>
           <p className="muted">{fmt(s.startsAt)} → {fmt(s.endsAt)}</p>
           <div className="row" style={{ gap: "0.5rem", marginTop: "0.5rem" }}>
-            <button className="btn secondary" onClick={() => viewLeaderboard(s)}>📊 Leaderboard</button>
+            <button type="button" className="btn secondary" onClick={() => viewLeaderboard(s)}>📊 Leaderboard</button>
             {s.status === "active" && connected && (
-              <button className="btn" style={{ background: "#450a0a" }} onClick={() => endSeason(s)}>End season</button>
+              <button type="button" className="btn season-end-btn" onClick={() => endSeason(s)}>End season</button>
             )}
           </div>
         </div>
       ))}
 
       {selected && (
-        <div className="card" style={{ marginTop: "1.5rem" }}>
-          <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <h2>📊 {selected.season.label} — Rankings</h2>
-            <button onClick={() => setSelected(null)} style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: "1.2rem" }}>✕</button>
+        <div className="card season-detail-card">
+          <div className="season-detail-header">
+            <h2>📊 {selected.season.label}</h2>
+            <button type="button" className="season-detail-close" onClick={() => { setSelected(null); setTimeline([]); }} aria-label="Close">✕</button>
           </div>
+
           {lbLoading && <p className="muted">Loading…</p>}
-          {selected.leaderboard.map((entry) => (
-            <div key={entry.rank} className="season-lb-row">
-              <span className="season-lb-rank">#{entry.rank}</span>
-              <span className="season-lb-name">{entry.user.displayName || entry.user.wallet.slice(0, 10) + "…"}</span>
-              <span className="season-lb-pts">{entry.points.toLocaleString()} pts</span>
-            </div>
-          ))}
-          {selected.leaderboard.length === 0 && <p className="muted">No scores yet this season.</p>}
+
+          {!lbLoading && (
+            <>
+              <div className="season-chart-block">
+                <div className="season-chart-tabs">
+                  <button type="button" className={`btn secondary ${chartMode === "daily" ? "active" : ""}`} onClick={() => setChartMode("daily")}>Daily pts</button>
+                  <button type="button" className={`btn secondary ${chartMode === "cumulative" ? "active" : ""}`} onClick={() => setChartMode("cumulative")}>Cumulative</button>
+                </div>
+                <SeasonSparkline
+                  data={timeline}
+                  mode={chartMode}
+                  width={320}
+                  label={chartMode === "daily" ? "Community points per day" : "Total points over season"}
+                />
+              </div>
+
+              <h3 className="season-lb-heading">Rankings</h3>
+              {selected.leaderboard.map((entry) => (
+                <div key={entry.rank} className="season-lb-row">
+                  <span className="season-lb-rank">#{entry.rank}</span>
+                  <span className="season-lb-name">{entry.user.displayName || entry.user.wallet.slice(0, 10) + "…"}</span>
+                  <span className="season-lb-pts">{entry.points.toLocaleString()} pts</span>
+                </div>
+              ))}
+              {selected.leaderboard.length === 0 && <p className="muted">No scores yet this season.</p>}
+            </>
+          )}
         </div>
       )}
 
-      {connected && (
-        <div className="card" style={{ marginTop: "2rem" }}>
+      <WalletGate title="Connect to manage seasons" description="Community leads need a connected wallet to create or configure seasons.">
+        <div className="card" style={{ marginTop: "1.5rem" }}>
           <h2>Create Season</h2>
           <div className="form-group">
             <label>Season name</label>
@@ -140,13 +177,12 @@ export default function SeasonsPage() {
             <label>End date</label>
             <input className="input" type="datetime-local" value={newEnd} onChange={(e) => setNewEnd(e.target.value)} />
           </div>
-          <button className="btn" onClick={create} disabled={creating}>Create season</button>
+          <button type="button" className="btn" onClick={create} disabled={creating}>Create season</button>
           {msg && <p className="muted" style={{ marginTop: "0.5rem" }}>{msg}</p>}
         </div>
-      )}
-      {!connected && <div className="card" style={{ marginTop: "1.5rem" }}><ConnectWalletButton /></div>}
+      </WalletGate>
 
-      <p style={{ marginTop: "1.5rem" }}><Link href="/app/me">← Back to My Ops</Link></p>
+      <p className="page-back"><Link href="/app/me">← Back to My Ops</Link></p>
     </main>
   );
 }

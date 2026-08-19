@@ -1,11 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
 import { API_BASE } from "../../../../lib/config";
-import { authHeaders, getStoredToken } from "../../../../lib/session";
+import { authHeaders } from "../../../../lib/session";
 import { getStoredCommunityId } from "../../../../lib/community";
-import ConnectWalletButton from "../../../ConnectWalletButton";
-import Link from "next/link";
+import ConnectToContinue from "../../../ConnectToContinue";
 
 export default function MissionBuilderPage() {
   const [title, setTitle] = useState("");
@@ -15,7 +14,6 @@ export default function MissionBuilderPage() {
   const [tasks, setTasks] = useState([{ title: "", actionType: "REPLY" as const, platform: "X" as const, details: "" }]);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-  const connected = Boolean(getStoredToken());
   const communityId = getStoredCommunityId();
 
   const addTask = () => setTasks((t) => [...t, { title: "", actionType: "REPLY", platform: "X", details: "" }]);
@@ -44,19 +42,15 @@ export default function MissionBuilderPage() {
     setSaving(false);
   };
 
-  if (!connected) return (
-    <main className="container">
-      <h1>Mission Builder</h1>
-      <div className="card"><p className="muted">Connect wallet to create missions.</p><ConnectWalletButton /></div>
-    </main>
-  );
-
   return (
-    <main className="container">
-      <div className="kicker">Lead tools</div>
-      <h1>Mission Builder</h1>
-      <p className="muted">Create structured shill missions with multiple tasks for your community.</p>
-
+    <ConnectToContinue
+      title="Mission Builder"
+      kicker="Lead tools"
+      description="Create structured shill missions with multiple tasks for your community."
+      gateDescription="Connect wallet to create missions for your community."
+      backHref="/app"
+      backLabel="← Back to missions"
+    >
       <div className="card">
         <div className="form-group">
           <label>Mission title *</label>
@@ -123,7 +117,6 @@ export default function MissionBuilderPage() {
         <button className="btn" onClick={submit} disabled={saving}>{saving ? "Creating…" : "Create mission 🚀"}</button>
       </div>
       {msg && <p className="muted" style={{ marginTop: "0.75rem" }}>{msg}</p>}
-      <p style={{ marginTop: "1.5rem" }}><Link href="/app">← Back to missions</Link></p>
-    </main>
+    </ConnectToContinue>
   );
 }

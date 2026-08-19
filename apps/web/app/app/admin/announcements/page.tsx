@@ -2,10 +2,9 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { API_BASE } from "../../../../lib/config";
-import { authHeaders, getStoredToken } from "../../../../lib/session";
+import { authHeaders } from "../../../../lib/session";
 import { getStoredCommunityId } from "../../../../lib/community";
-import ConnectWalletButton from "../../../ConnectWalletButton";
-import Link from "next/link";
+import ConnectToContinue from "../../../ConnectToContinue";
 
 interface Announcement {
   id: string;
@@ -24,7 +23,6 @@ export default function AnnouncementsPage() {
   const [expiresAt, setExpiresAt] = useState("");
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-  const connected = Boolean(getStoredToken());
   const communityId = getStoredCommunityId();
 
   const load = useCallback(() => {
@@ -63,19 +61,15 @@ export default function AnnouncementsPage() {
     setAnnouncements((a) => a.filter((x) => x.id !== id));
   };
 
-  if (!connected) return (
-    <main className="container">
-      <h1>Announcements</h1>
-      <div className="card"><ConnectWalletButton /></div>
-    </main>
-  );
-
   return (
-    <main className="container">
-      <div className="kicker">Lead tools</div>
-      <h1>Announcement Composer</h1>
-      <p className="muted">Post pinned messages visible to all community members at the top of the feed.</p>
-
+    <ConnectToContinue
+      title="Announcement Composer"
+      kicker="Lead tools"
+      description="Post pinned messages visible to all community members at the top of the feed."
+      gateDescription="Connect wallet to compose and manage community announcements."
+      backHref="/app/admin/dashboard"
+      backLabel="← Back to admin"
+    >
       {loading && <p className="muted">Loading…</p>}
       {!loading && announcements.length === 0 && <div className="card"><p className="muted">No announcements yet.</p></div>}
 
@@ -111,8 +105,6 @@ export default function AnnouncementsPage() {
         <button className="btn" onClick={post} disabled={saving || !text.trim()}>Post announcement</button>
         {msg && <p className="muted" style={{ marginTop: "0.5rem" }}>{msg}</p>}
       </div>
-
-      <p style={{ marginTop: "1.5rem" }}><Link href="/app/admin/dashboard">← Back to admin</Link></p>
-    </main>
+    </ConnectToContinue>
   );
 }

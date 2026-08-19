@@ -2,9 +2,8 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { API_BASE } from "../../../lib/config";
-import { authHeaders, getStoredToken } from "../../../lib/session";
-import ConnectWalletButton from "../../ConnectWalletButton";
-import Link from "next/link";
+import { authHeaders } from "../../../lib/session";
+import ConnectToContinue, { useAuthedSession } from "../../ConnectToContinue";
 
 interface ReferralData {
   code: string;
@@ -20,7 +19,7 @@ export default function ReferralPage() {
   const [copied, setCopied] = useState(false);
   const [useCode, setUseCode] = useState("");
   const [redeemStatus, setRedeemStatus] = useState<string | null>(null);
-  const connected = Boolean(getStoredToken());
+  const connected = useAuthedSession();
 
   const load = useCallback(() => {
     if (!connected) { setLoading(false); return; }
@@ -59,22 +58,17 @@ export default function ReferralPage() {
     }
   };
 
-  if (!connected) return (
-    <main className="container">
-      <h1>Referrals</h1>
-      <div className="card"><p className="muted">Connect wallet to view your referral code.</p><ConnectWalletButton /></div>
-    </main>
-  );
-
-  if (loading) return <main className="container"><p className="muted">Loading…</p></main>;
-
   return (
-    <main className="container">
-      <div className="kicker">Earn together</div>
-      <h1>Referrals</h1>
-      <p className="muted">Invite friends to ShillOps. You earn 5% of all their points as bonus — forever.</p>
+    <ConnectToContinue
+      title="Referrals"
+      kicker="Earn together"
+      description="Invite friends to ShillOps. You earn 5% of all their points as bonus — forever."
+      gateDescription="Connect wallet to view your referral code and track bonus points."
+      backHref="/app/me"
+    >
+      {loading && <p className="muted">Loading…</p>}
 
-      {data && (
+      {!loading && data && (
         <>
           <div className="card ref-card">
             <div className="ref-code-label">Your invite link</div>
@@ -119,10 +113,6 @@ export default function ReferralPage() {
           </p>
         )}
       </div>
-
-      <p style={{ marginTop: "1.5rem" }}>
-        <Link href="/app/me">← Back to My Ops</Link>
-      </p>
-    </main>
+    </ConnectToContinue>
   );
 }

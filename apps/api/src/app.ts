@@ -3483,6 +3483,38 @@ export function createApp(prisma: PrismaClient) {
     });
   }));
 
+  // ── Seasons: daily activity timeline (for sparkline charts) ─────
+  app.get("/communities/:id/seasons/:seasonId/timeline", asyncRoute(async (req, res) => {
+    const season = await (prisma as any).season.findUnique({ where: { id: req.params.seasonId } });
+    if (!season || season.communityId !== req.params.id) return res.status(404).json({ error: "Season not found" });
+    const scores = await prisma.score.findMany({
+      where: {
+        communityId: req.params.id,
+        createdAt: { gte: new Date(season.startsAt), lte: new Date(season.endsAt) }
+      },
+      select: { points: true, createdAt: true }
+    });
+    const byDay: Record<string, number> = {};
+    for (const row of scores) {
+      const day = row.createdAt.toISOString().slice(0, 10);
+      byDay[day] = (byDay[day] ?? 0) + row.points;
+    }
+    const timeline: { date: string; points: number; cumulative: number }[] = [];
+    let cumulative = 0;
+    const start = new Date(season.startsAt);
+    start.setUTCHours(0, 0, 0, 0);
+    const endMs = Math.min(Date.now(), new Date(season.endsAt).getTime());
+    const cursor = new Date(start);
+    while (cursor.getTime() <= endMs) {
+      const key = cursor.toISOString().slice(0, 10);
+      const pts = byDay[key] ?? 0;
+      cumulative += pts;
+      timeline.push({ date: key, points: pts, cumulative });
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+    res.json({ season, timeline });
+  }));
+
   // ── Seasons: end season + snapshot ──────────────────────────────
   app.post("/communities/:id/seasons/:seasonId/end", writeLimiter, asyncRoute(async (req, res) => {
     const wallet = walletFromAuth(req);
