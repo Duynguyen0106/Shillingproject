@@ -9,6 +9,8 @@
   "scripts": {
     "dev": "npm run dev -w @shillops/api & npm run dev -w @shillops/web",
     "build": "npm run build -ws",
+    "build:prod": "npm run prisma:generate && npm run build -w @shillops/scoring-engine && npm run build -w @shillops/api && npm run build -w @shillops/web",
+    "deploy:local": "bash scripts/deploy-production.sh",
     "lint": "npm run lint -ws",
     "prisma:generate": "npm run prisma:generate -w @shillops/api",
     "prisma:migrate": "npm run prisma:migrate -w @shillops/api",

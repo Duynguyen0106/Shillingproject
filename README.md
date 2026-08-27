@@ -40,6 +40,20 @@
 6. Run Phase 1 smoke flow:
    - `npm run smoke:phase1`
 
+## Production Deploy
+
+See **[docs/DEPLOY.md](docs/DEPLOY.md)** for full instructions.
+
+Quick start with Docker:
+
+```bash
+cp infra/env.prod.example infra/env.prod
+# edit infra/env.prod — set URLs, passwords, WalletConnect ID
+./scripts/deploy-production.sh
+```
+
+Or deploy to Render using the included `render.yaml` blueprint.
+
 ## Demo Flow
 
 From the UI:

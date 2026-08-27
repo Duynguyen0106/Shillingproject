@@ -1,0 +1,56 @@
+# Render Blueprint — one-click deploy
+# https://render.com/docs/blueprint-spec
+#
+# After connecting this repo on Render:
+# 1. Set APP_URL to your web service URL (e.g. https://shillops-web.onrender.com)
+# 2. Set NEXT_PUBLIC_API_BASE to your API URL (e.g. https://shillops-api.onrender.com)
+# 3. Set NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID from https://dashboard.reown.com
+# 4. Optionally set TWITTERAPI_IO_KEY or X_BEARER_TOKEN for live feed
+
+databases:
+  - name: shillops-db
+    plan: free
+    databaseName: shillops
+    user: shillops
+
+services:
+  - type: web
+    name: shillops-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: shillops-db
+          property: connectionString
+      - key: APP_URL
+        sync: false
+      - key: RUN_SEED
+        value: "true"
+      - key: PORT
+        value: "4000"
+      - key: TWITTERAPI_IO_KEY
+        sync: false
+      - key: X_BEARER_TOKEN
+        sync: false
+      - key: FEED_POLL_MS
+        value: "60000"
+
+  - type: web
+    name: shillops-web
+    runtime: docker
+    plan: free
+    dockerfilePath: ./apps/web/Dockerfile
+    dockerContext: .
+    envVars:
+      - key: NEXT_PUBLIC_API_BASE
+        sync: false
+      - key: NEXT_PUBLIC_APP_URL
+        sync: false
+      - key: NEXT_PUBLIC_DEMO_COMMUNITY_ID
+        value: demo-community
+      - key: NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID
+        sync: false
