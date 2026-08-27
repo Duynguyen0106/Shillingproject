@@ -48,8 +48,8 @@ async function main() {
       priority: "HIGH" as const,
       urgency: 80,
       tasks: [
-        { title: "Reply with $DEMO mention", actionType: "REPLY" as const, platform: "X" as const, pointValue: 50 },
-        { title: "Quote-tweet with community context", actionType: "SHARE" as const, platform: "X" as const, pointValue: 30 },
+        { title: "Reply with $DEMO mention", actionType: "REPLY" as const, platform: "X" as const, basePoints: 50 },
+        { title: "Quote-tweet with community context", actionType: "SHARE" as const, platform: "X" as const, basePoints: 30 },
       ],
     },
     {
@@ -58,8 +58,8 @@ async function main() {
       priority: "MEDIUM" as const,
       urgency: 50,
       tasks: [
-        { title: "Post DexScreener link with commentary", actionType: "SHARE" as const, platform: "X" as const, pointValue: 30 },
-        { title: "Drop chart in Discord/Telegram", actionType: "SHARE" as const, platform: "TELEGRAM" as const, pointValue: 20 },
+        { title: "Post DexScreener link with commentary", actionType: "SHARE" as const, platform: "X" as const, basePoints: 30 },
+        { title: "Drop chart in Discord/Telegram", actionType: "SHARE" as const, platform: "TELEGRAM" as const, basePoints: 20 },
       ],
     },
     {
@@ -68,7 +68,7 @@ async function main() {
       priority: "LOW" as const,
       urgency: 20,
       tasks: [
-        { title: "Share referral link", actionType: "INVITE" as const, platform: "X" as const, pointValue: 20 },
+        { title: "Share referral link", actionType: "INVITE" as const, platform: "X" as const, basePoints: 20 },
       ],
     },
   ];
