@@ -1,0 +1,19 @@
+{
+  "name": "Memecoin Shill Ops",
+  "install": "bash ./.cursor/install.sh",
+  "start": "bash ./.cursor/start.sh",
+  "terminals": [
+    {
+      "name": "api",
+      "command": "cd apps/api && npm run dev"
+    },
+    {
+      "name": "web",
+      "command": "cd apps/web && npm run dev"
+    }
+  ],
+  "ports": [
+    { "name": "web", "port": 3000 },
+    { "name": "api", "port": 4000 }
+  ]
+}
