@@ -65,17 +65,15 @@ Update `APP_URL`, `NEXT_PUBLIC_APP_URL`, and `NEXT_PUBLIC_API_BASE`, then rebuil
 
 ## Option B — Render (managed, free tier)
 
-1. Push this branch to GitHub.
-2. Go to [Render Dashboard](https://dashboard.render.com) → **New** → **Blueprint**.
-3. Connect `Duynguyen0106/Shillingproject` and select the branch with `render.yaml`.
-4. After services are created, set sync=false env vars in the Render UI:
-   - **API** `APP_URL` → your web service URL
-   - **Web** `NEXT_PUBLIC_API_BASE` → your API service URL
-   - **Web** `NEXT_PUBLIC_APP_URL` → your web service URL
-   - **Web** `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` → Reown project ID
-5. Redeploy the web service after setting build-time env vars.
+**Full walkthrough:** [docs/RENDER.md](RENDER.md)
 
-Render provisions PostgreSQL automatically via the blueprint.
+1. [Render Dashboard](https://dashboard.render.com) → **New** → **Blueprint**
+2. Connect `Duynguyen0106/Shillingproject`, branch **`cursor/deploy-47ce`**
+3. Apply the blueprint (creates Postgres + API + web)
+4. Set `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` on **shillops-web** (prompted during setup, or add manually)
+5. Redeploy **shillops-web** after setting WalletConnect ID
+
+URLs (`APP_URL`, `NEXT_PUBLIC_API_BASE`, `NEXT_PUBLIC_APP_URL`) are wired automatically via `render.yaml`.
 
 ---
 

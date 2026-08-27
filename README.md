@@ -52,7 +52,7 @@ cp infra/env.prod.example infra/env.prod
 ./scripts/deploy-production.sh
 ```
 
-Or deploy to Render using the included `render.yaml` blueprint.
+Or deploy to Render using the included `render.yaml` blueprint — see **[docs/RENDER.md](docs/RENDER.md)**.
 
 ## Demo Flow
 

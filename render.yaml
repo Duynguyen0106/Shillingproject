@@ -1,11 +1,11 @@
 # Render Blueprint — one-click deploy
 # https://render.com/docs/blueprint-spec
 #
-# After connecting this repo on Render:
-# 1. Set APP_URL to your web service URL (e.g. https://shillops-web.onrender.com)
-# 2. Set NEXT_PUBLIC_API_BASE to your API URL (e.g. https://shillops-api.onrender.com)
-# 3. Set NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID from https://dashboard.reown.com
-# 4. Optionally set TWITTERAPI_IO_KEY or X_BEARER_TOKEN for live feed
+# Deploy: Render Dashboard → New → Blueprint → connect this repo → branch cursor/deploy-47ce
+#
+# Only secret you must set manually after first deploy:
+#   shillops-web → NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID (from https://dashboard.reown.com)
+# Then redeploy shillops-web so the ID is baked into the Next.js build.
 
 databases:
   - name: shillops-db
@@ -18,6 +18,7 @@ services:
     name: shillops-api
     runtime: docker
     plan: free
+    region: oregon
     dockerfilePath: ./apps/api/Dockerfile
     dockerContext: .
     healthCheckPath: /health
@@ -27,11 +28,12 @@ services:
           name: shillops-db
           property: connectionString
       - key: APP_URL
-        sync: false
+        fromService:
+          type: web
+          name: shillops-web
+          envVarKey: RENDER_EXTERNAL_URL
       - key: RUN_SEED
         value: "true"
-      - key: PORT
-        value: "4000"
       - key: TWITTERAPI_IO_KEY
         sync: false
       - key: X_BEARER_TOKEN
@@ -43,13 +45,20 @@ services:
     name: shillops-web
     runtime: docker
     plan: free
+    region: oregon
     dockerfilePath: ./apps/web/Dockerfile
     dockerContext: .
     envVars:
       - key: NEXT_PUBLIC_API_BASE
-        sync: false
+        fromService:
+          type: web
+          name: shillops-api
+          envVarKey: RENDER_EXTERNAL_URL
       - key: NEXT_PUBLIC_APP_URL
-        sync: false
+        fromService:
+          type: web
+          name: shillops-web
+          envVarKey: RENDER_EXTERNAL_URL
       - key: NEXT_PUBLIC_DEMO_COMMUNITY_ID
         value: demo-community
       - key: NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID
