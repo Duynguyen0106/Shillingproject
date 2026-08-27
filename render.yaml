@@ -1,0 +1,65 @@
+# Render Blueprint — one-click deploy
+# https://render.com/docs/blueprint-spec
+#
+# Deploy: Render Dashboard → New → Blueprint → connect this repo → branch cursor/deploy-47ce
+#
+# Only secret you must set manually after first deploy:
+#   shillops-web → NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID (from https://dashboard.reown.com)
+# Then redeploy shillops-web so the ID is baked into the Next.js build.
+
+databases:
+  - name: shillops-db
+    plan: free
+    databaseName: shillops
+    user: shillops
+
+services:
+  - type: web
+    name: shillops-api
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: shillops-db
+          property: connectionString
+      - key: APP_URL
+        fromService:
+          type: web
+          name: shillops-web
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: RUN_SEED
+        value: "true"
+      - key: TWITTERAPI_IO_KEY
+        sync: false
+      - key: X_BEARER_TOKEN
+        sync: false
+      - key: FEED_POLL_MS
+        value: "60000"
+
+  - type: web
+    name: shillops-web
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./apps/web/Dockerfile
+    dockerContext: .
+    envVars:
+      - key: NEXT_PUBLIC_API_BASE
+        fromService:
+          type: web
+          name: shillops-api
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: NEXT_PUBLIC_APP_URL
+        fromService:
+          type: web
+          name: shillops-web
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: NEXT_PUBLIC_DEMO_COMMUNITY_ID
+        value: demo-community
+      - key: NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID
+        sync: false

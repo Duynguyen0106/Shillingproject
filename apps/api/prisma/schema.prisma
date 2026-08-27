@@ -1,0 +1,561 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum SignalType {
+  KOL_POST
+  MENTION_SPIKE
+  WHALE_BUY
+  VOLUME_SPIKE
+}
+
+enum MissionStatus {
+  ACTIVE
+  COMPLETED
+  EXPIRED
+}
+
+enum Platform {
+  X
+  TELEGRAM
+  DISCORD
+}
+
+enum ActionType {
+  REPLY
+  SHARE
+  BOOST
+  INVITE
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum FeedPostKind {
+  KOL_POST
+  MENTION
+}
+
+model User {
+  id           String      @id @default(cuid())
+  wallet       String      @unique
+  displayName  String?
+  xHandle      String?     @unique
+  xVerified    Boolean     @default(false)
+  xVerifyToken String?
+  referralCode String?     @unique
+  holderMultiplier Float   @default(1.0)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  memberships  CommunityMember[]
+  submissions  Submission[]
+  scores       Score[]
+  claims       MissionClaim[]
+  shortLinks   ShortLink[]
+  pinnedMissions Mission[] @relation("MissionPins")
+  checkIns     MissionCheckIn[]
+  feedShills   FeedShill[]
+  focusedCommunities Community[] @relation("CommunityFocusBy")
+  proofJobs    ProofJob[]
+  streak       UserStreak?
+  achievements UserAchievement[]
+  pushSubscriptions PushSubscription[]
+  redemptions  Redemption[]
+  announcements Announcement[] @relation("AnnouncementAuthor")
+  referralsGiven  Referral[] @relation("ReferralReferrer")
+  referralsReceived Referral[] @relation("ReferralReferee")
+  seasonSnapshots SeasonSnapshot[]
+  dailyQuestCompletions DailyQuestCompletion[]
+  redemptionClaims RedemptionClaim[]
+}
+
+model Community {
+  id               String               @id @default(cuid())
+  name             String
+  ticker           String
+  description      String?
+  chainId          String?
+  contractAddress  String?
+  dexUrl           String?
+  imageUrl         String?
+  xCommunityUrl    String?
+  xCommunityId     String?              @unique
+  focusPostId      String?
+  focusAt          DateTime?
+  focusById        String?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+  members          CommunityMember[]
+  focusPost        FeedPost?            @relation("CommunityFocus", fields: [focusPostId], references: [id], onDelete: SetNull)
+  focusBy          User?                @relation("CommunityFocusBy", fields: [focusById], references: [id], onDelete: SetNull)
+  signals          Signal[]
+  missions         Mission[]
+  scoreEntries     Score[]
+  leaderboardSnaps LeaderboardSnapshot[]
+  shortLinks       ShortLink[]
+  kolWatches       KolWatch[]
+  feedPosts        FeedPost[]
+  feedShills       FeedShill[]
+  proofJobs        ProofJob[]
+  announcements    Announcement[]
+  redemptions      Redemption[]
+  holderTiers      HolderTier[]
+  alliancesInitiated AllianceRaid[] @relation("AllianceInitiator")
+  alliancesReceived  AllianceRaid[] @relation("AlliancePartner")
+  seasons            Season[]
+  seasonSnapshots    SeasonSnapshot[]
+  dailyQuests        DailyQuest[]
+  redemptionClaims   RedemptionClaim[]
+
+  @@unique([chainId, contractAddress])
+}
+
+model KolWatch {
+  id               String    @id @default(cuid())
+  communityId      String
+  handle           String
+  displayName      String?
+  xUserId          String?
+  bio              String?
+  profileImageUrl  String?
+  followers        Int?
+  following        Int?
+  statusesCount    Int?
+  verified         Boolean   @default(false)
+  createdAt        DateTime  @default(now())
+  lastFetchedAt    DateTime?
+  community        Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  posts            FeedPost[]
+
+  @@unique([communityId, handle])
+}
+
+model FeedPost {
+  id               String       @id @default(cuid())
+  communityId      String
+  kolWatchId       String?
+  kind             FeedPostKind
+  url              String
+  authorHandle     String
+  authorName       String?
+  authorFollowers  Int          @default(0)
+  text             String
+  likeCount        Int          @default(0)
+  replyCount       Int          @default(0)
+  retweetCount     Int          @default(0)
+  quoteCount       Int          @default(0)
+  viewCount        Int          @default(0)
+  postedAt         DateTime
+  notifiedAt       DateTime?
+  missionId        String?
+  createdAt        DateTime     @default(now())
+  community        Community    @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  kolWatch         KolWatch?    @relation(fields: [kolWatchId], references: [id], onDelete: SetNull)
+  mission          Mission?     @relation(fields: [missionId], references: [id], onDelete: SetNull)
+  shills           FeedShill[]
+  focusedBy        Community[]  @relation("CommunityFocus")
+  proofJobs        ProofJob[]
+  allianceRaids    AllianceRaid[]
+
+  @@unique([communityId, url])
+  @@index([communityId, postedAt])
+  @@index([communityId, authorHandle])
+}
+
+model FeedShill {
+  id          String    @id @default(cuid())
+  communityId String
+  feedPostId  String
+  userId      String
+  missionId   String?
+  reshill     Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  feedPost    FeedPost  @relation(fields: [feedPostId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([communityId, createdAt])
+  @@index([feedPostId, createdAt])
+  @@index([userId, feedPostId])
+}
+
+model CommunityMember {
+  id           String   @id @default(cuid())
+  userId       String
+  communityId  String
+  role         String   @default("member")
+  joinedAt     DateTime @default(now())
+  lastActiveAt DateTime @default(now())
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  community    Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, communityId])
+  @@index([communityId, role])
+}
+
+model Signal {
+  id            String      @id @default(cuid())
+  communityId   String
+  type          SignalType
+  severity      Int
+  sourceRef     String?
+  dedupeKey     String      @unique
+  metadata      Json?
+  createdAt     DateTime    @default(now())
+  community     Community   @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  mission       Mission?
+}
+
+model Mission {
+  id            String       @id @default(cuid())
+  communityId   String
+  signalId      String?      @unique
+  title         String
+  description   String
+  status        MissionStatus @default(ACTIVE)
+  priority      Priority      @default(MEDIUM)
+  urgency       Int           @default(50)
+  pinText       String?
+  pinnedAt      DateTime?
+  pinnedById    String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  community     Community     @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  signal        Signal?       @relation(fields: [signalId], references: [id], onDelete: SetNull)
+  pinnedBy      User?         @relation("MissionPins", fields: [pinnedById], references: [id], onDelete: SetNull)
+  tasks         MissionTask[]
+  shortLinks    ShortLink[]
+  claims        MissionClaim[]
+  checkIns      MissionCheckIn[]
+  feedPosts     FeedPost[]
+}
+
+model MissionCheckIn {
+  id        String   @id @default(cuid())
+  missionId String
+  userId    String
+  createdAt DateTime @default(now())
+  mission   Mission  @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([missionId, userId])
+  @@index([missionId])
+}
+
+model MissionClaim {
+  id        String   @id @default(cuid())
+  missionId String
+  userId    String
+  claimedAt DateTime @default(now())
+  mission   Mission  @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([missionId, userId])
+}
+
+model MissionTask {
+  id          String       @id @default(cuid())
+  missionId   String
+  title       String
+  details     String?
+  actionType  ActionType
+  platform    Platform
+  basePoints  Int          @default(10)
+  createdAt   DateTime     @default(now())
+  mission     Mission      @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  submissions Submission[]
+}
+
+model Submission {
+  id           String   @id @default(cuid())
+  taskId        String
+  userId        String
+  proofUrl      String
+  proofText     String?
+  submittedAt   DateTime @default(now())
+  verifiedAt    DateTime?
+  isVerified    Boolean  @default(false)
+  pointsAwarded Int      @default(0)
+  task          MissionTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model EngagementEvent {
+  id           String   @id @default(cuid())
+  submissionId String?
+  type         String
+  value        Int      @default(0)
+  createdAt    DateTime @default(now())
+}
+
+model Score {
+  id           String   @id @default(cuid())
+  userId       String
+  communityId  String
+  points       Int
+  reason       String
+  sourceId     String?
+  createdAt    DateTime @default(now())
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  community    Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+}
+
+model LeaderboardSnapshot {
+  id          String   @id @default(cuid())
+  communityId String
+  generatedAt DateTime @default(now())
+  payload     Json
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+}
+
+model ShortLink {
+  id          String   @id @default(cuid())
+  communityId String
+  missionId   String?
+  userId      String?
+  code        String   @unique
+  targetUrl   String
+  createdAt   DateTime @default(now())
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  mission     Mission?  @relation(fields: [missionId], references: [id], onDelete: SetNull)
+  user        User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clicks      ShortLinkClick[]
+
+  @@index([userId])
+  @@index([missionId, userId])
+}
+
+model ShortLinkClick {
+  id          String   @id @default(cuid())
+  shortLinkId String
+  referrer    String?
+  userAgent   String?
+  ipHash      String?
+  createdAt   DateTime @default(now())
+  shortLink   ShortLink @relation(fields: [shortLinkId], references: [id], onDelete: Cascade)
+}
+
+enum ProofJobStatus {
+  PENDING
+  CHECKING
+  SCORED
+  FAILED
+}
+
+model ProofJob {
+  id          String         @id @default(cuid())
+  userId      String
+  communityId String
+  feedPostId  String
+  status      ProofJobStatus @default(PENDING)
+  proofUrl    String?
+  pointsAwarded Int?
+  failReason  String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  community   Community      @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  feedPost    FeedPost       @relation(fields: [feedPostId], references: [id], onDelete: Cascade)
+
+  @@index([userId, communityId])
+  @@index([feedPostId])
+}
+
+model UserStreak {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  currentStreak Int     @default(0)
+  longestStreak Int     @default(0)
+  lastActivityDate DateTime?
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Achievement {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  title       String
+  description String
+  icon        String?
+  earnedBy    UserAchievement[]
+}
+
+model UserAchievement {
+  id            String      @id @default(cuid())
+  userId        String
+  achievementId String
+  earnedAt      DateTime    @default(now())
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  achievement   Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, achievementId])
+  @@index([userId])
+}
+
+model Announcement {
+  id          String   @id @default(cuid())
+  communityId String
+  authorId    String?
+  text        String
+  pinned      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  expiresAt   DateTime?
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  author      User?    @relation("AnnouncementAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([communityId, createdAt])
+}
+
+model PushSubscription {
+  id          String   @id @default(cuid())
+  userId      String
+  endpoint    String
+  p256dh      String
+  auth        String
+  createdAt   DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, endpoint])
+}
+
+model Redemption {
+  id          String   @id @default(cuid())
+  userId      String
+  communityId String
+  pointsBurned Int
+  txHash      String?
+  status      String   @default("pending")
+  createdAt   DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@index([userId, communityId])
+}
+
+model Referral {
+  id           String   @id @default(cuid())
+  referrerId   String
+  refereeId    String
+  communityId  String?
+  code         String   @unique
+  usedAt       DateTime?
+  createdAt    DateTime @default(now())
+  referrer     User     @relation("ReferralReferrer", fields: [referrerId], references: [id], onDelete: Cascade)
+  referee      User     @relation("ReferralReferee",  fields: [refereeId],  references: [id], onDelete: Cascade)
+
+  @@unique([referrerId, refereeId])
+  @@index([referrerId])
+  @@index([code])
+}
+
+model HolderTier {
+  id          String   @id @default(cuid())
+  communityId String
+  minTokens   Float
+  multiplier  Float
+  label       String
+  createdAt   DateTime @default(now())
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@index([communityId])
+}
+
+model AllianceRaid {
+  id              String   @id @default(cuid())
+  initiatorCommunityId String
+  partnerCommunityId   String
+  feedPostId      String
+  status          String   @default("active") // active | ended
+  createdAt       DateTime @default(now())
+  endsAt          DateTime
+  initiator       Community @relation("AllianceInitiator", fields: [initiatorCommunityId], references: [id], onDelete: Cascade)
+  partner         Community @relation("AlliancePartner",   fields: [partnerCommunityId],   references: [id], onDelete: Cascade)
+  post            FeedPost  @relation(fields: [feedPostId], references: [id], onDelete: Cascade)
+
+  @@index([initiatorCommunityId])
+  @@index([partnerCommunityId])
+}
+
+model Season {
+  id          String   @id @default(cuid())
+  communityId String
+  label       String
+  startsAt    DateTime
+  endsAt      DateTime
+  status      String   @default("active") // active | ended
+  createdAt   DateTime @default(now())
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  snapshots   SeasonSnapshot[]
+
+  @@index([communityId, status])
+}
+
+model SeasonSnapshot {
+  id          String   @id @default(cuid())
+  seasonId    String
+  userId      String
+  communityId String
+  points      Int
+  rank        Int
+  createdAt   DateTime @default(now())
+  season      Season    @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@unique([seasonId, userId])
+  @@index([seasonId, rank])
+}
+
+model DailyQuest {
+  id          String   @id @default(cuid())
+  communityId String
+  date        String
+  questType   String
+  description String
+  pointBonus  Int      @default(25)
+  createdAt   DateTime @default(now())
+  completions DailyQuestCompletion[]
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@unique([communityId, date])
+  @@index([communityId, date])
+}
+
+model DailyQuestCompletion {
+  id          String   @id @default(cuid())
+  questId     String
+  userId      String
+  completedAt DateTime @default(now())
+  quest       DailyQuest @relation(fields: [questId], references: [id], onDelete: Cascade)
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([questId, userId])
+  @@index([userId])
+}
+
+model RedemptionClaim {
+  id          String   @id @default(cuid())
+  userId      String
+  communityId String
+  pointsBurned Int
+  amount      String
+  signature   String
+  nonce       String   @unique
+  claimedAt   DateTime?
+  txHash      String?
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@index([userId, communityId])
+  @@index([nonce])
+}
